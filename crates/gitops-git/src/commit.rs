@@ -102,13 +102,20 @@ pub fn commit(runner: &dyn CommandRunner, request: &CommitRequest) -> Result<Com
         if looks_like_signing_failure(&stderr) {
             return Err(Error::SigningFailed { detail: stderr });
         }
-        return Err(Error::CommitFailed {
-            detail: if stderr.is_empty() {
-                trimmed(&out.stdout)
-            } else {
-                stderr
-            },
-        });
+        // Everything the commit printed, because a hook's complaint is the actionable
+        // part and git puts it on either stream.
+        let combined = [trimmed(&out.stdout), stderr.clone()]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n");
+        // A live pre-commit hook is by far the likeliest reason a staged, signable commit
+        // is refused, and misreading some other failure as a hook failure still points at
+        // the right output — whereas missing a hook failure invites a `--no-verify` retry.
+        if governance.status.hooks.pre_commit_active() {
+            return Err(Error::HookRejected { detail: combined });
+        }
+        return Err(Error::CommitFailed { detail: combined });
     }
 
     let commit_id = runner.run("git", &["rev-parse", "HEAD"], cwd)?.value();
@@ -165,11 +172,11 @@ fn looks_like_signing_failure(stderr: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::runner::ScriptedRunner;
 
-    fn compliant_runner() -> ScriptedRunner {
+    pub(crate) fn compliant_runner() -> ScriptedRunner {
         ScriptedRunner::new()
             .with("git rev-parse --show-toplevel", 0, "/repo\n", "")
             .with("git config commit.gpgsign", 0, "true\n", "")
@@ -197,6 +204,16 @@ mod tests {
             .with("git diff --cached --quiet", 1, "", "")
             .with("git rev-parse HEAD", 0, "abc1234\n", "")
             .with("git log -1 --format=%G?", 0, "G\n", "")
+            .with("git config core.hooksPath", 1, "", "")
+            .with("git config --global core.hooksPath", 1, "", "")
+            .with("git config --local core.hooksPath", 1, "", "")
+            .with("git rev-parse --git-path hooks", 0, "/repo/.git/hooks\n", "")
+            .with_path("/repo/.git/hooks", true, true)
+    }
+
+    /// A repository whose `pre-commit` hook is present and executable.
+    pub(crate) fn with_live_pre_commit(runner: ScriptedRunner) -> ScriptedRunner {
+        runner.with_path("/repo/.git/hooks/pre-commit", true, true)
     }
 
     #[test]
@@ -353,5 +370,126 @@ mod tests {
             .position(|c| c.starts_with("git commit"))
             .expect("commit was made");
         assert!(fix < made, "config must be repaired before committing");
+    }
+}
+
+#[cfg(test)]
+mod hook_tests {
+    use super::{tests::*, *};
+
+    const HOOK_OUTPUT: &str = "clippy: unused variable `x`\npre-commit hook failed\n";
+
+    fn request() -> CommitRequest {
+        CommitRequest {
+            message: "m".into(),
+            all: true,
+            ..Default::default()
+        }
+    }
+
+    fn staged(runner: crate::runner::ScriptedRunner) -> crate::runner::ScriptedRunner {
+        runner
+            .with("git add -A", 0, "", "")
+            .with("git diff --cached --name-only", 0, "a.rs\n", "")
+    }
+
+    #[test]
+    fn a_failing_pre_commit_hook_is_reported_as_a_hook_rejection() {
+        let runner = with_live_pre_commit(staged(compliant_runner()))
+            .with("git commit -S -m m", 1, "", HOOK_OUTPUT);
+        let err = commit(&runner, &request()).unwrap_err();
+        match &err {
+            Error::HookRejected { detail } => {
+                // The hook's own complaint has to survive, or there is nothing to fix.
+                assert!(detail.contains("unused variable"), "{detail}");
+            }
+            other => panic!("expected a hook rejection, got {other}"),
+        }
+        let message = err.to_string();
+        assert!(message.contains("--no-verify"), "{message}");
+        assert!(message.contains("unrelated to signing"), "{message}");
+    }
+
+    #[test]
+    fn a_hook_rejection_never_retries_or_bypasses_anything() {
+        let runner = with_live_pre_commit(staged(compliant_runner()))
+            .with("git commit -S -m m", 1, "", HOOK_OUTPUT);
+        commit(&runner, &request()).unwrap_err();
+        let calls = runner.calls();
+        assert!(!calls.iter().any(|c| c.contains("--no-verify")), "{calls:?}");
+        assert!(!calls.iter().any(|c| c.contains("--no-gpg-sign")), "{calls:?}");
+        assert!(
+            !calls.iter().any(|c| c.contains("commit.gpgsign false")),
+            "{calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|c| c.contains("core.hooksPath")
+                && (c.contains("--unset") || c.contains("/dev/null"))),
+            "{calls:?}"
+        );
+        // Exactly one commit attempt: a rejection is not retried.
+        assert_eq!(
+            calls.iter().filter(|c| c.starts_with("git commit")).count(),
+            1,
+            "{calls:?}"
+        );
+    }
+
+    #[test]
+    fn without_a_live_hook_a_failure_stays_a_plain_commit_failure() {
+        let runner = staged(compliant_runner()).with(
+            "git commit -S -m m",
+            1,
+            "",
+            "fatal: cannot lock ref HEAD\n",
+        );
+        let err = commit(&runner, &request()).unwrap_err();
+        assert!(matches!(err, Error::CommitFailed { .. }), "{err}");
+    }
+
+    #[test]
+    fn a_signing_failure_outranks_the_hook_explanation() {
+        let runner = with_live_pre_commit(staged(compliant_runner())).with(
+            "git commit -S -m m",
+            128,
+            "",
+            "error: gpg failed to sign the data\n",
+        );
+        let err = commit(&runner, &request()).unwrap_err();
+        assert!(matches!(err, Error::SigningFailed { .. }), "{err}");
+    }
+
+    #[test]
+    fn a_non_executable_pre_commit_hook_is_drift() {
+        let runner = compliant_runner().with_path("/repo/.git/hooks/pre-commit", true, false);
+        let status = crate::SigningStatus::read(&runner, None).unwrap();
+        assert!(!status.hooks.pre_commit_active());
+        assert!(
+            status.drift.iter().any(|d| matches!(
+                d,
+                crate::Drift::PreCommitNotExecutable { .. }
+            )),
+            "{:?}",
+            status.drift
+        );
+    }
+
+    #[test]
+    fn a_hooks_path_pointing_nowhere_is_drift() {
+        let runner = compliant_runner()
+            .with("git config core.hooksPath", 0, "/repo/.nope\n", "")
+            .with("git config --global core.hooksPath", 1, "", "")
+            .with("git config --local core.hooksPath", 0, "/repo/.nope\n", "")
+            .with("git rev-parse --git-path hooks", 0, "/repo/.nope\n", "");
+        let status = crate::SigningStatus::read(&runner, None).unwrap();
+        assert!(!status.hooks.directory_exists);
+        assert!(
+            status.drift.iter().any(|d| matches!(
+                d,
+                crate::Drift::HooksDirectoryMissing { .. }
+            )),
+            "{:?}",
+            status.drift
+        );
     }
 }

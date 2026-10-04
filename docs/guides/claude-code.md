@@ -11,7 +11,8 @@ pay for both:
 
 1. **It "fixes" your config.** A commit fails to sign, so it rewrites `user.email`, sets
    `commit.gpgsign=false`, or leaves a local override behind. The commit succeeds, your
-   global config is now wrong, and you find out three repos later.
+   global config is now wrong, and you find out three repos later. The same reflex applies
+   to a failing `pre-commit` hook: `--no-verify`, or `chmod -x`, and the guardrail is gone.
 2. **It asks you instead.** Every `git config` write becomes a permission prompt you have
    to read and adjudicate. Multiply by a long session and you have spent more time
    arbitrating config changes than steering the work.
@@ -72,6 +73,10 @@ to `~/.claude/CLAUDE.md` so it prefers the tools. Under your git practices:
   - If signing fails (e.g. a locked key that cannot be unlocked non-interactively), **stop
     and ask the user to unlock it.** Never fall back to an unsigned commit, never pass
     `allow_unsigned`, and never use `--no-gpg-sign`.
+  - **If a hook rejects the commit, fix what the hook reported.** A hook failure is a real
+    problem and is unrelated to signing. Never use `--no-verify`, never delete a hook,
+    never `chmod -x` one, and never repoint `core.hooksPath`. If the hook's complaint
+    cannot be fixed, report it and stop.
 ```
 
 Each clause is there for a specific failure that happens without it:
@@ -83,6 +88,7 @@ Each clause is there for a specific failure that happens without it:
 | The key is the source of truth | Config and key drifting apart in the wrong direction |
 | `user.name` is a preference | Your handle being renamed to your key's uid name |
 | Never `allow_unsigned` | The escape hatch being used as a fallback |
+| Fix what the hook reported | `--no-verify`, a deleted hook, or a `chmod -x` that makes a failing hook "pass" |
 
 ### Why rules and not just the server
 

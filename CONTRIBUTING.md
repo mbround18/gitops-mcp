@@ -29,7 +29,8 @@ Ports and adapters, with exactly one port:
 * `identity.rs` — resolves what a signing key says about itself (OpenPGP uid, or the
   comment on an SSH public key). Pure parsers, unit-tested against real command output.
 * `governance.rs` — turns `Drift` into `git config` writes. Dry-run capable.
-* `commit.rs` — reconcile, stage, commit with `-S`, report the signature.
+* `commit.rs` — reconcile, stage, commit with `-S`, classify failures, report the
+  signature.
 
 ### Invariants
 
@@ -45,7 +46,13 @@ These are the reason the crate exists. Do not relax them without a very good arg
 4. **`user.name` is not governed.** A display name is a preference; the email is what the
    signature is checked against. Only `user.email`, `user.signingkey`, `gpg.format` and
    `commit.gpgsign` are policed.
-5. **stdout is the protocol.** All logging goes to stderr (`GITOPS_MCP_LOG` sets the
+5. **Hook failures are never bypassed.** `--no-verify` appears nowhere in this codebase,
+   and there is no parameter that would add it. A failing `pre-commit` hook comes back as
+   `Error::HookRejected` carrying the hook's own output; the commit is not retried and
+   nothing about the repository's hooks or config is changed. A hook git will not run
+   (missing `core.hooksPath`, no executable bit) is reported as drift and deliberately
+   *not* auto-corrected — both have legitimate causes, so the fix is a judgment call.
+6. **stdout is the protocol.** All logging goes to stderr (`GITOPS_MCP_LOG` sets the
    filter). Printing to stdout corrupts the MCP stream.
 
 ## Development
@@ -72,7 +79,40 @@ Unscripted commands return a non-zero exit with an explanatory stderr, so a miss
 expectation fails loudly rather than silently passing.
 
 `ScriptedRunner::calls()` records every command line in order — use it to assert on
-sequencing and to assert that something was *not* run.
+sequencing and to assert that something was *not* run. Several tests exist purely for that
+negative: no `--no-verify`, no `--no-gpg-sign`, no `commit.gpgsign false`, no retry.
+
+The port also covers filesystem probes (`CommandRunner::path_info`), so hook presence and
+executability are scriptable too:
+
+```rust
+let runner = ScriptedRunner::new()
+    .with("git rev-parse --git-path hooks", 0, "/repo/.git/hooks\n", "")
+    .with_path("/repo/.git/hooks/pre-commit", true, false);  // present, not executable
+```
+
+### End-to-end tests
+
+`apps/gitops-mcp/tests/` drives the built binary over real stdio JSON-RPC against a real
+repository, because the hook guards are only worth anything if they hold against real git.
+
+`tests/sandbox/mod.rs` builds a disposable world per test: a temporary `HOME`, a
+`GIT_CONFIG_GLOBAL` of its own, `GIT_CONFIG_NOSYSTEM=1`, and a freshly generated
+passphrase-free SSH signing key (`gpg.format=ssh`) with a matching `allowedSignersFile`.
+That means real signed commits with a real `%G?` verdict of `G`, with no passphrase prompt
+and without ever reading or writing the developer's git config or keyring.
+
+```rust
+let sandbox = Sandbox::new();
+sandbox.write_hook(".git/hooks", "pre-commit", "#!/bin/sh\necho 'lint failed' >&2\nexit 1\n");
+let mut server = sandbox.server();
+let result = server.call("commit", json!({"message": "m", "all": true, "cwd": sandbox.repo}));
+assert!(result.is_error());
+assert_eq!(sandbox.git(&["rev-list", "--all", "--count"]), "0");
+```
+
+Hook semantics are per [githooks(5)](https://git-scm.com/docs/githooks): `pre-commit` runs
+before the message is finalized, and a non-zero exit aborts the commit.
 
 ### Adding a tool
 

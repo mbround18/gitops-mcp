@@ -201,6 +201,10 @@ fn summarize(status: &SigningStatus) -> String {
         ));
     }
     out.push_str(&format!(
+        "pre-commit hook: {}\n",
+        describe_pre_commit(&status.hooks)
+    ));
+    out.push_str(&format!(
         "git user: {} <{}>\n",
         status.user_name.effective.as_deref().unwrap_or("(unset)"),
         status.user_email.effective.as_deref().unwrap_or("(unset)"),
@@ -215,6 +219,19 @@ fn summarize(status: &SigningStatus) -> String {
         out.push_str("Run `git_signing_enforce` to correct this.\n");
     }
     out
+}
+
+/// A hook git will not run is worth naming explicitly: it is indistinguishable from a
+/// hook that passes.
+fn describe_pre_commit(hooks: &gitops_git::HooksStatus) -> String {
+    match (hooks.pre_commit_present, hooks.pre_commit_executable) {
+        (true, true) => format!(
+            "active ({})",
+            hooks.directory.as_deref().unwrap_or("unknown hooks dir")
+        ),
+        (true, false) => "present but NOT executable — git will skip it".to_owned(),
+        (false, _) => "none".to_owned(),
+    }
 }
 
 fn with_structured<T: serde::Serialize>(text: String, value: &T) -> CallToolResult {

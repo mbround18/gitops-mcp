@@ -11,8 +11,13 @@ every later commit in that repo. Or it asks for permission to run `git config` f
 fifth time in an hour, and you spend the session arbitrating config changes instead of
 steering the actual work.
 
-Either way the cost is the same: more time spent policing `git config` than reviewing
-code.
+The same reflex shows up with hooks: a `pre-commit` hook fails, and instead of fixing
+what the hook reported, the agent retries with `--no-verify`, clears the hook's executable
+bit, or points `core.hooksPath` at nothing. The commit lands, your guardrails are gone,
+and nobody mentions it.
+
+Either way the cost is the same: more time spent policing `git config` and hooks than
+reviewing code.
 
 `gitops` takes the decision away from the agent. Your signing key is the source of truth,
 config is reconciled to the key before every commit, and there is no unsigned fallback to
@@ -35,6 +40,12 @@ The rules it enforces:
   signature is attributed by.
 * No signing key, or a locked one? The commit **fails** with an actionable error.
   `--no-gpg-sign` appears nowhere in this codebase.
+* A failing `pre-commit` hook is reported with the hook's own output and an instruction to
+  fix it. `--no-verify` appears nowhere in this codebase either, and a rejected commit
+  leaves your hooks and config exactly as they were.
+* A hook git will *not* run — missing `core.hooksPath`, or a hook without its executable
+  bit — is reported as drift, because a silently skipped hook looks just like a passing
+  one.
 
 ## Getting started
 
@@ -118,8 +129,18 @@ change, then again without it.
 "commit whatever happens to be staged". You get back the commit id and git's own
 signature verdict.
 
-If signing is unavailable, the call fails and tells you to unlock the key. That is the
-feature, not a bug.
+If signing is unavailable, the call fails and tells you to unlock the key. If a hook
+rejects the commit, you get the hook's complaint and nothing is bypassed. That is the
+feature, not a bug:
+
+```
+a git hook rejected the commit:
+lint: trailing whitespace in README.md
+
+Fix what the hook reports, then retry. Do not bypass the hook with `--no-verify`, do not
+disable or delete the hook, and do not turn off commit signing — the hook failure is the
+real problem and it is unrelated to signing.
+```
 
 ## Documentation
 

@@ -110,6 +110,58 @@ Unlock the key (signing anything once caches the passphrase in `gpg-agent`) and 
 `allow_unsigned: true` exists as a deliberate escape hatch; using it is a decision you are
 making on purpose.
 
+## Hooks
+
+A failing [`pre-commit` hook](https://git-scm.com/docs/githooks) is the other place where
+signing gets sacrificed for convenience. The hook fails, and the next move is
+`--no-verify`, or `chmod -x`, or `core.hooksPath=/dev/null` — after which the commit
+succeeds, the guardrail is gone, and the original problem is still there.
+
+`gitops` treats a hook rejection as a result, not an obstacle:
+
+```
+a git hook rejected the commit:
+lint: trailing whitespace in README.md
+
+Fix what the hook reports, then retry. Do not bypass the hook with `--no-verify`, do not
+disable or delete the hook, and do not turn off commit signing — the hook failure is the
+real problem and it is unrelated to signing.
+```
+
+Everything the hook printed comes back, because that is the part you can act on. The
+commit is not retried, and nothing about your repository changes: the hook keeps its
+executable bit, `core.hooksPath` is untouched, and `commit.gpgsign` stays `true`.
+
+There is no `no_verify` parameter. `--no-verify` does not appear anywhere in this
+codebase, so neither you nor an agent can ask the server to skip a hook — bypassing one is
+a decision you make deliberately with raw `git`.
+
+Note that hook failures and signing failures are different problems. A hook that rejects
+your commit has nothing to do with your key, and disabling signing will not make it pass.
+
+### Hooks that cannot run
+
+`git_signing_status` also reports whether git will actually run your `pre-commit` hook,
+because a skipped hook is indistinguishable from a passing one:
+
+```
+pre-commit hook: active (.git/hooks)
+pre-commit hook: present but NOT executable — git will skip it
+pre-commit hook: none
+```
+
+Two cases are reported as drift:
+
+| Drift | Meaning |
+| --- | --- |
+| `hooks_directory_missing` | `core.hooksPath` points at a directory that does not exist, so no hook can run |
+| `pre_commit_not_executable` | the hook file is there but has no executable bit, so git skips it silently |
+
+Neither is auto-corrected. Both can be legitimate — a `core.hooksPath` of `.husky` before
+`pnpm install` has run, for instance — and deciding between "install the tooling",
+"`chmod +x` the hook" and "remove the setting" is a judgment call, not a repair. They are
+reported so the decision is yours, and so a disabled hook cannot quietly stay disabled.
+
 ## Troubleshooting
 
 **`unsupported gpg.format`** — only `openpgp` and `ssh` are understood. `x509`/gpgsm is
@@ -122,6 +174,10 @@ keyring, or the path in `user.signingkey` does not exist. Check
 **An SSH key reports no email** — SSH keys carry only a free-form comment. Give the public
 key a comment that is your email address (`ssh-keygen -C you@example.com`) and the email
 check starts working; until then, only the `commit.gpgsign` rules apply.
+
+**A hook keeps rejecting the commit** — read what the hook printed; it is included in the
+error. Fix that. If the hook itself is broken, fix or remove the hook deliberately — do
+not route around it to get one commit through.
 
 **Server logs** — set `GITOPS_MCP_LOG=debug` to see every command the server runs, on
 stderr.

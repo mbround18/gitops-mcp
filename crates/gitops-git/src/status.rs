@@ -72,6 +72,10 @@ pub enum Drift {
     KeyIdentityUnknown { key: String, reason: String },
     /// A local config value shadows the global one for a signing key.
     LocalOverride { key: String, value: String },
+    /// `core.hooksPath` points at a directory that does not exist, so no hook can run.
+    HooksDirectoryMissing { path: String },
+    /// A `pre-commit` hook exists but is not executable, so git silently skips it.
+    PreCommitNotExecutable { path: String },
 }
 
 impl Drift {
@@ -93,7 +97,35 @@ impl Drift {
             Self::LocalOverride { key, value } => {
                 format!("local config overrides {key} with `{value}`")
             }
+            Self::HooksDirectoryMissing { path } => format!(
+                "core.hooksPath points at `{path}`, which does not exist, so no hook can run"
+            ),
+            Self::PreCommitNotExecutable { path } => format!(
+                "the pre-commit hook `{path}` is not executable, so git skips it silently"
+            ),
         }
+    }
+}
+
+/// The state of this repository's hooks.
+///
+/// Reported because the usual way to make a failing `pre-commit` hook stop failing is to
+/// disable it — pointing `core.hooksPath` at nothing, or clearing the executable bit —
+/// and a silently skipped hook looks exactly like a passing one.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct HooksStatus {
+    pub hooks_path: ScopedValue,
+    /// Resolved hooks directory (`git rev-parse --git-path hooks`).
+    pub directory: Option<String>,
+    pub directory_exists: bool,
+    pub pre_commit_present: bool,
+    pub pre_commit_executable: bool,
+}
+
+impl HooksStatus {
+    /// True when a `pre-commit` hook is in place and git will actually run it.
+    pub fn pre_commit_active(&self) -> bool {
+        self.pre_commit_present && self.pre_commit_executable
     }
 }
 
@@ -108,6 +140,7 @@ pub struct SigningStatus {
     pub user_email: ScopedValue,
     pub user_name: ScopedValue,
     pub signing_identity: Option<SigningIdentity>,
+    pub hooks: HooksStatus,
     /// True when a key is configured, signing is enabled, and the secret key is present.
     pub signing_available: bool,
     /// True when nothing needs correcting.
@@ -192,6 +225,8 @@ impl SigningStatus {
             });
         }
 
+        let hooks = read_hooks(runner, cwd, repository.is_some(), &mut drift)?;
+
         // A local override of an identity key is how signing silently breaks per-repo.
         for (key, scoped) in [
             ("user.email", &user_email),
@@ -220,6 +255,7 @@ impl SigningStatus {
             user_email,
             user_name,
             signing_identity,
+            hooks,
             signing_available,
             compliant: drift.is_empty(),
             drift,
@@ -232,6 +268,62 @@ impl SigningStatus {
             .as_deref()
             .ok_or(Error::NotARepository)
     }
+}
+
+fn read_hooks(
+    runner: &dyn CommandRunner,
+    cwd: Option<&Path>,
+    in_repository: bool,
+    drift: &mut Vec<Drift>,
+) -> Result<HooksStatus> {
+    let hooks_path = ScopedValue::read(runner, cwd, "core.hooksPath")?;
+    if !in_repository {
+        return Ok(HooksStatus {
+            hooks_path,
+            ..Default::default()
+        });
+    }
+
+    // `--git-path hooks` already accounts for core.hooksPath.
+    let directory = runner
+        .run("git", &["rev-parse", "--git-path", "hooks"], cwd)?
+        .value();
+    let Some(dir) = directory.clone() else {
+        return Ok(HooksStatus {
+            hooks_path,
+            ..Default::default()
+        });
+    };
+
+    let base = cwd.map(Path::to_path_buf);
+    let resolve = |relative: &str| -> std::path::PathBuf {
+        let path = Path::new(relative);
+        match (&base, path.is_absolute()) {
+            (Some(root), false) => root.join(path),
+            _ => path.to_path_buf(),
+        }
+    };
+
+    let dir_info = runner.path_info(&resolve(&dir));
+    let pre_commit = resolve(&format!("{}/pre-commit", dir.trim_end_matches('/')));
+    let hook_info = runner.path_info(&pre_commit);
+
+    if !dir_info.exists && hooks_path.effective.is_some() {
+        drift.push(Drift::HooksDirectoryMissing { path: dir.clone() });
+    }
+    if hook_info.exists && !hook_info.executable {
+        drift.push(Drift::PreCommitNotExecutable {
+            path: pre_commit.display().to_string(),
+        });
+    }
+
+    Ok(HooksStatus {
+        hooks_path,
+        directory,
+        directory_exists: dir_info.exists,
+        pre_commit_present: hook_info.exists,
+        pre_commit_executable: hook_info.executable,
+    })
 }
 
 pub(crate) fn is_true(value: &str) -> bool {

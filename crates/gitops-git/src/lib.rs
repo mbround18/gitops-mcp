@@ -17,7 +17,7 @@ pub mod status;
 pub use commit::{CommitOutcome, CommitRequest};
 pub use governance::{Correction, Reconciliation, reconcile};
 pub use runner::{CommandRunner, SystemRunner};
-pub use status::{Drift, ScopedValue, SigningIdentity, SigningStatus};
+pub use status::{Drift, HooksStatus, ScopedValue, SigningIdentity, SigningStatus};
 
 /// Errors this crate can produce.
 #[derive(Debug, thiserror::Error)]
@@ -48,6 +48,13 @@ pub enum Error {
     SigningFailed { detail: String },
     #[error("staging failed: {detail}")]
     StageFailed { detail: String },
+    #[error(
+        "a git hook rejected the commit:\n{detail}\n\n\
+         Fix what the hook reports, then retry. Do not bypass the hook with `--no-verify`, \
+         do not disable or delete the hook, and do not turn off commit signing — the hook \
+         failure is the real problem and it is unrelated to signing."
+    )]
+    HookRejected { detail: String },
     #[error("commit failed: {detail}")]
     CommitFailed { detail: String },
     #[error("nothing staged to commit")]

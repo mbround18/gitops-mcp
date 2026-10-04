@@ -1,8 +1,9 @@
-//! Port + adapter for running external processes.
+//! The outbound port, and its adapters.
 //!
-//! The domain logic in this crate never touches `std::process` directly; it talks to
-//! [`CommandRunner`]. Tests substitute a scripted runner, so every behaviour below is
-//! deterministic without a real repository, key ring, or network.
+//! The domain logic in this crate never touches `std::process` or `std::fs` directly; it
+//! talks to [`CommandRunner`], which covers both running a process and probing a path.
+//! Tests substitute a scripted runner, so every behaviour below is deterministic without
+//! a real repository, key ring, or filesystem.
 
 use std::{
     collections::HashMap,
@@ -32,6 +33,14 @@ impl CommandOutput {
     }
 }
 
+/// What the domain knows about a path: enough to tell a missing hook from a hook that
+/// cannot run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize)]
+pub struct PathInfo {
+    pub exists: bool,
+    pub executable: bool,
+}
+
 /// The single outbound port of this crate.
 pub trait CommandRunner {
     /// Run `program` with `args`, optionally inside `cwd`. Returning `Err` means the
@@ -42,6 +51,9 @@ pub trait CommandRunner {
         args: &[&str],
         cwd: Option<&Path>,
     ) -> std::io::Result<CommandOutput>;
+
+    /// Probe a path. A path that cannot be inspected reads as absent.
+    fn path_info(&self, path: &Path) -> PathInfo;
 }
 
 /// Adapter that shells out to the real binaries on `PATH`.
@@ -71,12 +83,24 @@ impl CommandRunner for SystemRunner {
             stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
         })
     }
+
+    fn path_info(&self, path: &Path) -> PathInfo {
+        use std::os::unix::fs::PermissionsExt;
+        match std::fs::metadata(path) {
+            Ok(meta) => PathInfo {
+                exists: true,
+                executable: meta.permissions().mode() & 0o111 != 0,
+            },
+            Err(_) => PathInfo::default(),
+        }
+    }
 }
 
 /// Test adapter: replays canned output keyed by `"program arg arg ..."`.
 #[derive(Debug, Default)]
 pub struct ScriptedRunner {
     responses: HashMap<String, CommandOutput>,
+    paths: HashMap<PathBuf, PathInfo>,
     calls: std::cell::RefCell<Vec<String>>,
 }
 
@@ -94,6 +118,13 @@ impl ScriptedRunner {
                 stderr: stderr.to_owned(),
             },
         );
+        self
+    }
+
+    /// Declare what a path looks like. Undeclared paths read as absent.
+    pub fn with_path(mut self, path: &str, exists: bool, executable: bool) -> Self {
+        self.paths
+            .insert(PathBuf::from(path), PathInfo { exists, executable });
         self
     }
 
@@ -126,6 +157,10 @@ impl CommandRunner for ScriptedRunner {
             stdout: String::new(),
             stderr: format!("scripted runner has no response for `{key}`"),
         }))
+    }
+
+    fn path_info(&self, path: &Path) -> PathInfo {
+        self.paths.get(path).copied().unwrap_or_default()
     }
 }
 
