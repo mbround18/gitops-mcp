@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2024"
 license = "BSD-3-Clause"
 authors = ["Michael Bruno <michael.bruno1337@gmail.com>"]
-repository = "https://github.com/MBRound18/gitops"
+repository = "https://github.com/mbround18/gitops-mcp"
 rust-version = "1.88"
 
 [workspace.dependencies]
