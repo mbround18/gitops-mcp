@@ -41,7 +41,7 @@ The rules it enforces:
 * No signing key, or a locked one? The commit **fails** with an actionable error.
   `--no-gpg-sign` appears nowhere in this codebase.
 * A failing `pre-commit` hook is reported with the hook's own output and an instruction to
-  fix it. `--no-verify` appears nowhere in this codebase either, and a rejected commit
+  fix it. The server never passes `--no-verify` to git, and a rejected commit
   leaves your hooks and config exactly as they were.
 * A hook git will *not* run — missing `core.hooksPath`, or a hook without its executable
   bit — is reported as drift, because a silently skipped hook looks just like a passing

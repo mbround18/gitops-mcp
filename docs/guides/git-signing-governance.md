@@ -132,9 +132,9 @@ Everything the hook printed comes back, because that is the part you can act on.
 commit is not retried, and nothing about your repository changes: the hook keeps its
 executable bit, `core.hooksPath` is untouched, and `commit.gpgsign` stays `true`.
 
-There is no `no_verify` parameter. `--no-verify` does not appear anywhere in this
-codebase, so neither you nor an agent can ask the server to skip a hook — bypassing one is
-a decision you make deliberately with raw `git`.
+There is no `no_verify` parameter, and the server never passes `--no-verify` to git, so
+neither you nor an agent can ask it to skip a hook — bypassing one is a decision you make
+deliberately with raw `git`.
 
 Note that hook failures and signing failures are different problems. A hook that rejects
 your commit has nothing to do with your key, and disabling signing will not make it pass.

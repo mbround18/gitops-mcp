@@ -46,8 +46,8 @@ These are the reason the crate exists. Do not relax them without a very good arg
 4. **`user.name` is not governed.** A display name is a preference; the email is what the
    signature is checked against. Only `user.email`, `user.signingkey`, `gpg.format` and
    `commit.gpgsign` are policed.
-5. **Hook failures are never bypassed.** `--no-verify` appears nowhere in this codebase,
-   and there is no parameter that would add it. A failing `pre-commit` hook comes back as
+5. **Hook failures are never bypassed.** `--no-verify` is never passed to git, and there
+   is no parameter that would add it. A failing `pre-commit` hook comes back as
    `Error::HookRejected` carrying the hook's own output; the commit is not retried and
    nothing about the repository's hooks or config is changed. A hook git will not run
    (missing `core.hooksPath`, no executable bit) is reported as drift and deliberately
