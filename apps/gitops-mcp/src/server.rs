@@ -97,8 +97,7 @@ impl GitOpsServer {
         Parameters(params): Parameters<EnforceParams>,
     ) -> Result<CallToolResult, ErrorData> {
         let cwd = params.cwd.map(PathBuf::from);
-        let result =
-            reconcile(&self.runner, cwd.as_deref(), params.dry_run).map_err(internal)?;
+        let result = reconcile(&self.runner, cwd.as_deref(), params.dry_run).map_err(internal)?;
 
         let mut text = if result.corrections.is_empty() {
             "Git signing config already matches the signing key; nothing to correct.".to_owned()
@@ -153,10 +152,7 @@ impl GitOpsServer {
                     outcome.subject
                 );
                 if let Some(sig) = &outcome.signature_status {
-                    text.push_str(&format!(
-                        "Signature: {sig} ({})\n",
-                        describe_signature(sig)
-                    ));
+                    text.push_str(&format!("Signature: {sig} ({})\n", describe_signature(sig)));
                 }
                 text.push_str(&format!("Staged {} path(s)\n", outcome.staged.len()));
                 if outcome.governance.changed() {
@@ -180,7 +176,10 @@ impl GitOpsServer {
 impl ServerHandler for GitOpsServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(Implementation::new(env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")))
+            .with_server_info(Implementation::new(
+                env!("CARGO_PKG_NAME"),
+                env!("CARGO_PKG_VERSION"),
+            ))
             .with_instructions(INSTRUCTIONS)
     }
 }

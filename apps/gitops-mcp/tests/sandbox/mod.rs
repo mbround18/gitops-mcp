@@ -32,7 +32,17 @@ impl Sandbox {
             &home_path,
             &home_path,
             "ssh-keygen",
-            &["-q", "-t", "ed25519", "-N", "", "-C", EMAIL, "-f", key.to_str().unwrap()],
+            &[
+                "-q",
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-C",
+                EMAIL,
+                "-f",
+                key.to_str().unwrap(),
+            ],
         );
 
         let public = std::fs::read_to_string(home_path.join("id_ed25519.pub")).unwrap();
@@ -99,12 +109,17 @@ impl Sandbox {
 
     /// Start the MCP server against this sandbox and complete the handshake.
     pub fn server(&self) -> Server {
-        let mut child = command(&self.repo, self.home(), env!("CARGO_BIN_EXE_gitops-mcp"), &[])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn gitops-mcp");
+        let mut child = command(
+            &self.repo,
+            self.home(),
+            env!("CARGO_BIN_EXE_gitops-mcp"),
+            &[],
+        )
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn gitops-mcp");
 
         let stdout = BufReader::new(child.stdout.take().unwrap());
         let mut server = Server {

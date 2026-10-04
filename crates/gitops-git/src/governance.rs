@@ -68,7 +68,11 @@ pub fn reconcile(
         && status.repository.is_some()
     {
         planned.push((
-            vec!["--local".into(), "--unset-all".into(), "commit.gpgsign".into()],
+            vec![
+                "--local".into(),
+                "--unset-all".into(),
+                "commit.gpgsign".into(),
+            ],
             format!("local config disabled signing with `{local}`"),
         ));
     }
@@ -160,7 +164,12 @@ mod tests {
             .with("git config --global commit.gpgsign", 0, "true\n", "")
             .with("git config --local commit.gpgsign", 1, "", "")
             .with("git config user.signingkey", 0, "354F34B4DB349BD6\n", "")
-            .with("git config --global user.signingkey", 0, "354F34B4DB349BD6\n", "")
+            .with(
+                "git config --global user.signingkey",
+                0,
+                "354F34B4DB349BD6\n",
+                "",
+            )
             .with("git config --local user.signingkey", 1, "", "")
             .with("git config gpg.format", 0, "openpgp\n", "")
             .with("git config --global gpg.format", 0, "openpgp\n", "")
@@ -201,8 +210,12 @@ mod tests {
 
     #[test]
     fn rewritten_email_is_restored_from_the_key() {
-        let runner = with_email(base_runner(), "llm@nowhere.invalid\n", "llm@nowhere.invalid\n")
-            .with("git config --global user.email me@example.com", 0, "", "");
+        let runner = with_email(
+            base_runner(),
+            "llm@nowhere.invalid\n",
+            "llm@nowhere.invalid\n",
+        )
+        .with("git config --global user.email me@example.com", 0, "", "");
         let result = reconcile(&runner, None, false).unwrap();
         assert_eq!(result.corrections.len(), 1);
         assert_eq!(
@@ -225,7 +238,11 @@ mod tests {
         .with("git config --global commit.gpgsign true", 0, "", "")
         .with("git config --local --unset-all commit.gpgsign", 0, "", "");
         let result = reconcile(&runner, None, false).unwrap();
-        let commands: Vec<_> = result.corrections.iter().map(|c| c.command.as_str()).collect();
+        let commands: Vec<_> = result
+            .corrections
+            .iter()
+            .map(|c| c.command.as_str())
+            .collect();
         assert_eq!(
             commands,
             vec![
@@ -237,7 +254,11 @@ mod tests {
 
     #[test]
     fn dry_run_writes_nothing() {
-        let runner = with_email(base_runner(), "llm@nowhere.invalid\n", "llm@nowhere.invalid\n");
+        let runner = with_email(
+            base_runner(),
+            "llm@nowhere.invalid\n",
+            "llm@nowhere.invalid\n",
+        );
         let result = reconcile(&runner, None, true).unwrap();
         assert_eq!(result.corrections.len(), 1);
         assert!(!result.corrections[0].applied);

@@ -2,11 +2,7 @@
 
 use std::path::Path;
 
-use crate::{
-    Error, Result,
-    runner::CommandRunner,
-    status::SigningIdentity,
-};
+use crate::{Error, Result, runner::CommandRunner, status::SigningIdentity};
 
 /// Read the identity of `key` under the given `gpg.format`.
 pub fn resolve(
@@ -99,8 +95,16 @@ fn parse_gpg_uid(stdout: &str) -> (Option<String>, Option<String>) {
 /// `256 SHA256:abc… the-comment (ED25519)` -> `the-comment`
 fn parse_ssh_keygen_comment(stdout: &str) -> Option<String> {
     let line = stdout.lines().next()?;
-    let rest = line.split_whitespace().skip(2).collect::<Vec<_>>().join(" ");
-    let comment = rest.rsplit_once(" (").map(|(c, _)| c).unwrap_or(&rest).trim();
+    let rest = line
+        .split_whitespace()
+        .skip(2)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let comment = rest
+        .rsplit_once(" (")
+        .map(|(c, _)| c)
+        .unwrap_or(&rest)
+        .trim();
     (!comment.is_empty() && comment != "no comment").then(|| comment.to_owned())
 }
 
@@ -133,7 +137,10 @@ sub:u:4096:1:48338CAD143699C7:1711036800::::::e::::::23:\n";
 
     #[test]
     fn missing_uid_yields_no_identity() {
-        assert_eq!(parse_gpg_uid("pub:u:4096:1:DEADBEEF:0:::u:::scESC:\n"), (None, None));
+        assert_eq!(
+            parse_gpg_uid("pub:u:4096:1:DEADBEEF:0:::u:::scESC:\n"),
+            (None, None)
+        );
     }
 
     #[test]

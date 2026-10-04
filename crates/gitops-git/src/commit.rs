@@ -166,9 +166,15 @@ fn stage(
 
 fn looks_like_signing_failure(stderr: &str) -> bool {
     let lower = stderr.to_ascii_lowercase();
-    ["gpg failed to sign", "secret key not available", "no secret key", "signing failed", "inappropriate ioctl"]
-        .iter()
-        .any(|needle| lower.contains(needle))
+    [
+        "gpg failed to sign",
+        "secret key not available",
+        "no secret key",
+        "signing failed",
+        "inappropriate ioctl",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 #[cfg(test)]
@@ -200,14 +206,24 @@ pub(crate) mod tests {
                 "uid:u::::0::ABC::Michael Bruno <me@example.com>::::::::::0:\n",
                 "",
             )
-            .with("gpg --list-secret-keys --with-colons KEYID", 0, "sec:u:\n", "")
+            .with(
+                "gpg --list-secret-keys --with-colons KEYID",
+                0,
+                "sec:u:\n",
+                "",
+            )
             .with("git diff --cached --quiet", 1, "", "")
             .with("git rev-parse HEAD", 0, "abc1234\n", "")
             .with("git log -1 --format=%G?", 0, "G\n", "")
             .with("git config core.hooksPath", 1, "", "")
             .with("git config --global core.hooksPath", 1, "", "")
             .with("git config --local core.hooksPath", 1, "", "")
-            .with("git rev-parse --git-path hooks", 0, "/repo/.git/hooks\n", "")
+            .with(
+                "git rev-parse --git-path hooks",
+                0,
+                "/repo/.git/hooks\n",
+                "",
+            )
             .with_path("/repo/.git/hooks", true, true)
     }
 
@@ -220,7 +236,12 @@ pub(crate) mod tests {
     fn signs_a_file_list_commit() {
         let runner = compliant_runner()
             .with("git add -- src/lib.rs", 0, "", "")
-            .with("git commit -S -m feat: thing", 0, "[main abc1234] feat: thing\n", "");
+            .with(
+                "git commit -S -m feat: thing",
+                0,
+                "[main abc1234] feat: thing\n",
+                "",
+            );
         let outcome = commit(
             &runner,
             &CommitRequest {
@@ -284,8 +305,12 @@ pub(crate) mod tests {
 
     #[test]
     fn refuses_to_commit_unsigned_without_opt_in() {
-        let runner = compliant_runner()
-            .with("gpg --list-secret-keys --with-colons KEYID", 2, "", "no secret key\n");
+        let runner = compliant_runner().with(
+            "gpg --list-secret-keys --with-colons KEYID",
+            2,
+            "",
+            "no secret key\n",
+        );
         let err = commit(
             &runner,
             &CommitRequest {
@@ -326,9 +351,12 @@ pub(crate) mod tests {
 
     #[test]
     fn nothing_staged_is_an_error() {
-        let runner = compliant_runner()
-            .with("git add -- a.rs", 0, "", "")
-            .with("git diff --cached --quiet", 0, "", "");
+        let runner = compliant_runner().with("git add -- a.rs", 0, "", "").with(
+            "git diff --cached --quiet",
+            0,
+            "",
+            "",
+        );
         let err = commit(
             &runner,
             &CommitRequest {
@@ -345,7 +373,12 @@ pub(crate) mod tests {
     fn config_is_repaired_before_the_commit_is_made() {
         let runner = compliant_runner()
             .with("git config user.email", 0, "llm@nowhere.invalid\n", "")
-            .with("git config --global user.email", 0, "llm@nowhere.invalid\n", "")
+            .with(
+                "git config --global user.email",
+                0,
+                "llm@nowhere.invalid\n",
+                "",
+            )
             .with("git config --global user.email me@example.com", 0, "", "")
             .with("git add -A", 0, "", "")
             .with("git diff --cached --name-only", 0, "a.rs\n", "")
@@ -395,8 +428,12 @@ mod hook_tests {
 
     #[test]
     fn a_failing_pre_commit_hook_is_reported_as_a_hook_rejection() {
-        let runner = with_live_pre_commit(staged(compliant_runner()))
-            .with("git commit -S -m m", 1, "", HOOK_OUTPUT);
+        let runner = with_live_pre_commit(staged(compliant_runner())).with(
+            "git commit -S -m m",
+            1,
+            "",
+            HOOK_OUTPUT,
+        );
         let err = commit(&runner, &request()).unwrap_err();
         match &err {
             Error::HookRejected { detail } => {
@@ -412,12 +449,22 @@ mod hook_tests {
 
     #[test]
     fn a_hook_rejection_never_retries_or_bypasses_anything() {
-        let runner = with_live_pre_commit(staged(compliant_runner()))
-            .with("git commit -S -m m", 1, "", HOOK_OUTPUT);
+        let runner = with_live_pre_commit(staged(compliant_runner())).with(
+            "git commit -S -m m",
+            1,
+            "",
+            HOOK_OUTPUT,
+        );
         commit(&runner, &request()).unwrap_err();
         let calls = runner.calls();
-        assert!(!calls.iter().any(|c| c.contains("--no-verify")), "{calls:?}");
-        assert!(!calls.iter().any(|c| c.contains("--no-gpg-sign")), "{calls:?}");
+        assert!(
+            !calls.iter().any(|c| c.contains("--no-verify")),
+            "{calls:?}"
+        );
+        assert!(
+            !calls.iter().any(|c| c.contains("--no-gpg-sign")),
+            "{calls:?}"
+        );
         assert!(
             !calls.iter().any(|c| c.contains("commit.gpgsign false")),
             "{calls:?}"
@@ -465,10 +512,10 @@ mod hook_tests {
         let status = crate::SigningStatus::read(&runner, None).unwrap();
         assert!(!status.hooks.pre_commit_active());
         assert!(
-            status.drift.iter().any(|d| matches!(
-                d,
-                crate::Drift::PreCommitNotExecutable { .. }
-            )),
+            status
+                .drift
+                .iter()
+                .any(|d| matches!(d, crate::Drift::PreCommitNotExecutable { .. })),
             "{:?}",
             status.drift
         );
@@ -484,10 +531,10 @@ mod hook_tests {
         let status = crate::SigningStatus::read(&runner, None).unwrap();
         assert!(!status.hooks.directory_exists);
         assert!(
-            status.drift.iter().any(|d| matches!(
-                d,
-                crate::Drift::HooksDirectoryMissing { .. }
-            )),
+            status
+                .drift
+                .iter()
+                .any(|d| matches!(d, crate::Drift::HooksDirectoryMissing { .. })),
             "{:?}",
             status.drift
         );

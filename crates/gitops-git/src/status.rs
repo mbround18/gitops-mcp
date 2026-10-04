@@ -100,9 +100,9 @@ impl Drift {
             Self::HooksDirectoryMissing { path } => format!(
                 "core.hooksPath points at `{path}`, which does not exist, so no hook can run"
             ),
-            Self::PreCommitNotExecutable { path } => format!(
-                "the pre-commit hook `{path}` is not executable, so git skips it silently"
-            ),
+            Self::PreCommitNotExecutable { path } => {
+                format!("the pre-commit hook `{path}` is not executable, so git skips it silently")
+            }
         }
     }
 }
@@ -264,9 +264,7 @@ impl SigningStatus {
     }
 
     pub(crate) fn require_repository(&self) -> Result<&str> {
-        self.repository
-            .as_deref()
-            .ok_or(Error::NotARepository)
+        self.repository.as_deref().ok_or(Error::NotARepository)
     }
 }
 
