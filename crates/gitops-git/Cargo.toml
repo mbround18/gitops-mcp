@@ -1,0 +1,14 @@
+[package]
+name = "gitops-git"
+description = "Git signing governance: inspect signing config, reconcile it with the signing key identity, and create signed commits."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
