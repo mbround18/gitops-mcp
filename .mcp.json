@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "gitops": {
+      "command": "gitops-mcp",
+      "args": [],
+      "env": {}
+    }
+  }
+}

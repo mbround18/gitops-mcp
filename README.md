@@ -149,6 +149,7 @@ real problem and it is unrelated to signing.
 * [Using it with Claude Code](docs/guides/claude-code.md) — installation and the
   `CLAUDE.md` rules that make the agent reach for it.
 * [CONTRIBUTING.md](CONTRIBUTING.md) — architecture and development.
+* [CLAUDE.md](CLAUDE.md) — the rules an agent working in this repository has to follow.
 
 ## License
 

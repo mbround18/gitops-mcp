@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__gitops__git_signing_status",
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo build:*)"
+    ]
+  }
+}

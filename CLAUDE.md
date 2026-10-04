@@ -1,0 +1,58 @@
+# Working in this repository
+
+`gitops-mcp` exists to stop agents from bypassing commit signing and git hooks. Holding
+that line while working on the tool itself is the bar.
+
+## Commit through this server
+
+This repo registers itself as a project-scope MCP server (`.mcp.json`), so after
+`cargo install --path apps/gitops-mcp` the tools are available here:
+
+* `mcp__gitops__commit` — `{message, files: [...]}` or `{message, all: true}`. Use it
+  instead of `git commit`.
+* `mcp__gitops__git_signing_status` — before touching anything signing-related.
+* `mcp__gitops__git_signing_enforce` — the only way config gets repaired.
+
+Never run `git config` to set `user.email`, `user.name`, `user.signingkey`, `gpg.format`
+or `commit.gpgsign`. Never pass `--no-gpg-sign`, `--no-verify` or `allow_unsigned`. If a
+hook rejects a commit, fix what the hook reported; if signing fails, ask for the key to be
+unlocked. Routing around either is the bug this repo was written to prevent.
+
+## Invariants
+
+The five rules in [CONTRIBUTING.md](CONTRIBUTING.md#invariants) are the product, not
+style preferences. Before changing behaviour in `crates/gitops-git`, read them. In short:
+the key is the source of truth, there is no unsigned fallback, reconcile precedes commit,
+`user.name` is not governed, hook failures are never bypassed, and stdout belongs to the
+protocol.
+
+## Layout
+
+* `crates/gitops-git` — all logic, behind the `CommandRunner` port. New behaviour goes
+  here, with tests.
+* `apps/gitops-mcp` — rmcp adapter only. Keep it thin.
+
+## Checks
+
+```bash
+cargo test                 # 23 unit + 7 end-to-end; all hermetic
+cargo clippy --all-targets
+cargo fmt
+```
+
+Unit tests script a `ScriptedRunner`; end-to-end tests in `apps/gitops-mcp/tests/` drive
+the built binary against a real repo in a disposable `HOME`. Both must stay deterministic
+and must never read or write the developer's real git config or keyring.
+
+After changing the code, reinstall — the registered server runs the installed binary, not
+`target/debug`:
+
+```bash
+cargo install --path apps/gitops-mcp
+```
+
+## Docs
+
+User-facing behaviour goes in `docs/guides/*`, developer detail in `CONTRIBUTING.md`, and
+`README.md` stays short. A behaviour change that users can observe is not finished until
+the matching guide says so.

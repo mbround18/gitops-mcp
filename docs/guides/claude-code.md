@@ -21,6 +21,19 @@ Installing the server fixes the first problem — `commit` can't produce an unsi
 and reconciles config to your key first. Adding the `CLAUDE.md` rules below fixes the
 second, by removing the agent's reason to touch `git config` at all.
 
+## What this repository ships
+
+If you are working *in* this repository, the wiring is already here:
+
+| File | Purpose |
+| --- | --- |
+| `.mcp.json` | Registers `gitops-mcp` as a project-scope MCP server, so the tools are available after `cargo install` without any per-machine setup. Claude Code asks you to approve a project server the first time. |
+| `CLAUDE.md` | Project instructions: commit through the server, never write git config, never bypass a hook, plus the invariants and check commands. |
+| `.claude/settings.json` | Allowlists the read-only `git_signing_status` tool and the usual `cargo` checks, so routine work stops prompting. Commits and config writes still prompt. |
+
+For your *own* projects, follow the steps below — user scope is the right place, since
+signing governance is not a per-repo concern.
+
 ## 1. Install the binary
 
 ```bash
