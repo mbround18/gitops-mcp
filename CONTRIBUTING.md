@@ -52,17 +52,24 @@ These are the reason the crate exists. Do not relax them without a very good arg
    nothing about the repository's hooks or config is changed. A hook git will not run
    (missing `core.hooksPath`, no executable bit) is reported as drift and deliberately
    *not* auto-corrected — both have legitimate causes, so the fix is a judgment call.
-6. **stdout is the protocol.** All logging goes to stderr (`GITOPS_MCP_LOG` sets the
-   filter). Printing to stdout corrupts the MCP stream.
+6. **stdout is the protocol.** All logging goes to stderr (`--log`, or `GITOPS_MCP_LOG`,
+   sets the filter). Printing to stdout corrupts the MCP stream. Argument parsing lives in
+   `main.rs` and must answer and exit — a flag that fell through to the server would leave
+   the binary blocked on stdin, which is what `tests/cli.rs` guards.
 
 ## Development
 
 ```bash
-cargo test            # unit tests, all hermetic
-cargo clippy --all-targets
-cargo fmt
-cargo install --path apps/gitops-mcp   # reinstall the global binary
+make test       # unit and end-to-end tests, all hermetic
+make lint       # clippy over every target, warnings denied
+make fmt        # format
+make check      # fmt-check + lint + test, what CI runs
+make install    # reinstall the global binary
+make help       # list every target
 ```
+
+The targets are thin wrappers over `cargo`; run `cargo` directly whenever you want a
+narrower invocation (`cargo test -p gitops-git drift`, say).
 
 ### Testing
 

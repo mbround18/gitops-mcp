@@ -27,7 +27,7 @@ If you are working *in* this repository, the wiring is already here:
 
 | File | Purpose |
 | --- | --- |
-| `.mcp.json` | Registers `gitops-mcp` as a project-scope MCP server, so the tools are available after `cargo install` without any per-machine setup. Claude Code asks you to approve a project server the first time. |
+| `.mcp.json` | Registers `gitops-mcp` as a project-scope MCP server, so the tools are available after `make install` without any per-machine setup. Claude Code asks you to approve a project server the first time. |
 | `CLAUDE.md` | Project instructions: commit through the server, never write git config, never bypass a hook, plus the invariants and check commands. |
 | `.claude/settings.json` | Allowlists the read-only `git_signing_status` tool and the usual `cargo` checks, so routine work stops prompting. Commits and config writes still prompt. |
 
@@ -37,7 +37,7 @@ signing governance is not a per-repo concern.
 ## 1. Install the binary
 
 ```bash
-cargo install --path apps/gitops-mcp
+make install                 # cargo install --path apps/gitops-mcp --locked --force
 ls ~/.cargo/bin/gitops-mcp
 ```
 
@@ -150,8 +150,8 @@ the session predates the server. Check `~/.claude/CLAUDE.md` and start a new ses
 **Tools do not appear.** `claude mcp list` should show `✔ Connected`. If the binary moved
 (a `cargo install` to a different root, for instance), re-register it.
 
-**A stale binary.** `cargo install --path apps/gitops-mcp` after any change to this repo.
+**A stale binary.** Run `make install` after any change to this repo.
 The registered server runs the installed binary, not `target/debug`.
 
-**Server logs.** `GITOPS_MCP_LOG=debug` prints every command the server runs to stderr,
+**Server logs.** `GITOPS_MCP_LOG=debug` (or `--log debug`) prints every command the server runs to stderr,
 which Claude Code surfaces in the MCP server output.

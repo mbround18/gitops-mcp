@@ -6,7 +6,7 @@ that line while working on the tool itself is the bar.
 ## Commit through this server
 
 This repo registers itself as a project-scope MCP server (`.mcp.json`), so after
-`cargo install --path apps/gitops-mcp` the tools are available here:
+`make install` the tools are available here:
 
 * `mcp__gitops__commit` — `{message, files: [...]}` or `{message, all: true}`. Use it
   instead of `git commit`.
@@ -35,9 +35,9 @@ protocol.
 ## Checks
 
 ```bash
-cargo test                 # 23 unit + 7 end-to-end; all hermetic
-cargo clippy --all-targets
-cargo fmt
+make check     # fmt-check + clippy (warnings denied) + the full test suite
+make test      # tests only
+make help      # every target
 ```
 
 Unit tests script a `ScriptedRunner`; end-to-end tests in `apps/gitops-mcp/tests/` drive
@@ -48,7 +48,7 @@ After changing the code, reinstall — the registered server runs the installed 
 `target/debug`:
 
 ```bash
-cargo install --path apps/gitops-mcp
+make install
 ```
 
 ## Docs

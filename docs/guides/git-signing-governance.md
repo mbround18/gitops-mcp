@@ -179,5 +179,5 @@ check starts working; until then, only the `commit.gpgsign` rules apply.
 error. Fix that. If the hook itself is broken, fix or remove the hook deliberately — do
 not route around it to get one commit through.
 
-**Server logs** — set `GITOPS_MCP_LOG=debug` to see every command the server runs, on
+**Server logs** — set `GITOPS_MCP_LOG=debug`, or pass `--log debug`, to see every command the server runs, on
 stderr.

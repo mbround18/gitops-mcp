@@ -11,6 +11,7 @@ rust-version.workspace = true
 [dependencies]
 gitops-git = { workspace = true }
 anyhow = { workspace = true }
+clap = { workspace = true }
 rmcp = { version = "3.5", features = ["server", "macros", "transport-io"] }
 schemars = { workspace = true }
 serde = { workspace = true }

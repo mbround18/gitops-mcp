@@ -68,8 +68,12 @@ git config --global gpg.format        # openpgp (default) or ssh
 ```bash
 git clone git@github.com:mbround18/gitops-mcp.git
 cd gitops-mcp
-cargo install --path apps/gitops-mcp      # → ~/.cargo/bin/gitops-mcp
+make install      # cargo install --path apps/gitops-mcp → ~/.cargo/bin/gitops-mcp
+gitops-mcp --version
 ```
+
+`make help` lists the rest of the targets. The binary itself speaks MCP on stdin/stdout,
+so apart from `--help`, `--version` and `--log` there is nothing to run by hand.
 
 ### Register with your client
 
