@@ -4,7 +4,7 @@
 
 ```
 apps/gitops-mcp/      binary crate: the MCP (rmcp) adapter, stdio transport
-crates/gitops-git/    library crate: all signing-governance logic
+crates/gitops-git/    library crate: all governance logic
 docs/guides/          user-facing documentation
 ```
 
@@ -15,15 +15,17 @@ docs/guides/          user-facing documentation
 Ports and adapters, with exactly one port:
 
 ```
-         ┌──────────────────────────────┐
-  MCP ──▶│ gitops-git (domain)          │──▶ CommandRunner ──▶ git / gpg / ssh-keygen
- stdio   │  status · governance · commit│      (port)            (SystemRunner adapter)
-         └──────────────────────────────┘                        (ScriptedRunner in tests)
+         ┌──────────────────────────────────┐
+  MCP ──▶│ gitops-git (domain)              │──▶ CommandRunner ──▶ git / gpg / ssh-keygen
+ stdio   │  status · governance · commit     │      (port)           (SystemRunner adapter)
+         │  restore · merge · push           │                       (ScriptedRunner in tests)
+         └──────────────────────────────────┘
 ```
 
 * `runner.rs` — the `CommandRunner` port, a real `SystemRunner`, and a `ScriptedRunner`
   that replays canned output keyed by command line. The domain never touches
-  `std::process` directly, so every behaviour is testable without a repository or keyring.
+  `std::process` or `std::fs` directly, so every behaviour is testable without a
+  repository, a keyring, or a writable disk.
 * `status.rs` — reads each signing-related config key at effective/global/local scope and
   classifies the gap between config and key as `Drift`.
 * `identity.rs` — resolves what a signing key says about itself (OpenPGP uid, or the
@@ -31,6 +33,10 @@ Ports and adapters, with exactly one port:
 * `governance.rs` — turns `Drift` into `git config` writes. Dry-run capable.
 * `commit.rs` — reconcile, stage, commit with `-S`, classify failures, report the
   signature.
+* `restore.rs` — discard changes to named paths, after writing them to a recovery patch.
+* `merge.rs` — fast-forward only, with the pre-flight checks that make a half-merge
+  impossible.
+* `push.rs` — publish the current branch, gated on every commit being signed.
 
 ### Invariants
 
@@ -38,9 +44,10 @@ These are the reason the crate exists. Do not relax them without a very good arg
 
 1. **The key is the source of truth.** Config is corrected to match the signing key's
    email, never the reverse.
-2. **No unsigned fallback.** `--no-gpg-sign` appears nowhere in this codebase. When
-   signing is unavailable the commit fails with an actionable error; a caller must pass
-   `allow_unsigned: true` explicitly to get an unsigned commit.
+2. **No unsigned fallback.** The server never passes `--no-gpg-sign` to git. When signing
+   is unavailable the commit fails with an actionable error. `CommitRequest` still has
+   `allow_unsigned` for library callers, but the MCP `commit` tool does not expose it, so
+   no amount of prompting gets an unsigned commit out of the server.
 3. **Reconcile before committing.** `commit` always runs governance first, and the test
    `config_is_repaired_before_the_commit_is_made` asserts the ordering.
 4. **`user.name` is not governed.** A display name is a preference; the email is what the
@@ -52,7 +59,20 @@ These are the reason the crate exists. Do not relax them without a very good arg
    nothing about the repository's hooks or config is changed. A hook git will not run
    (missing `core.hooksPath`, no executable bit) is reported as drift and deliberately
    *not* auto-corrected — both have legitimate causes, so the fix is a judgment call.
-6. **stdout is the protocol.** All logging goes to stderr (`--log`, or `GITOPS_MCP_LOG`,
+6. **A safeguard is never a parameter.** The dangerous variants of `restore`, `merge` and
+   `push` are absent from the request types, not defaulted to off: no force, no
+   `--no-verify`, no "restore everything", no confirmation flag to flip. A caller that
+   cannot name a knob cannot be talked into using it, and a refusal message that names the
+   flag it is refusing teaches that the flag exists — so refusals state the rule instead.
+   `nothing_this_server_runs_can_overwrite_published_history` asserts the command lines.
+7. **A destructive operation keeps a way back.** `restore` writes the diff it is about to
+   discard to a patch under the git directory, and a failed write aborts the restore
+   (`nothing_is_restored_when_the_patch_cannot_be_written`). The working tree has no
+   reflog; the patch is the only recovery path, so it is not optional.
+8. **Published history is not the server's to rewrite.** `push` only fast-forwards, and it
+   refuses to publish any commit whose `%G?` verdict is not `G` or `U`. This is the one
+   place signing is enforced on commits the server did not create.
+9. **stdout is the protocol.** All logging goes to stderr (`--log`, or `GITOPS_MCP_LOG`,
    sets the filter). Printing to stdout corrupts the MCP stream. Argument parsing lives in
    `main.rs` and must answer and exit — a flag that fell through to the server would leave
    the binary blocked on stdin, which is what `tests/cli.rs` guards.
@@ -118,8 +138,19 @@ assert!(result.is_error());
 assert_eq!(sandbox.git(&["rev-list", "--all", "--count"]), "0");
 ```
 
+`Sandbox::bare_remote` initializes a bare repository inside the sandbox and adds it as a
+remote, so push tests are real pushes with no network; `Sandbox::clone_to` stands in for a
+second developer, which is how the non-fast-forward refusal is tested against real git.
+
 Hook semantics are per [githooks(5)](https://git-scm.com/docs/githooks): `pre-commit` runs
-before the message is finalized, and a non-zero exit aborts the commit.
+before the message is finalized and a non-zero exit aborts the commit; `pre-push` runs
+before anything is sent and a non-zero exit aborts the push. The behaviour of each
+operation is checked against its own documentation —
+[git-restore](https://git-scm.com/docs/git-restore),
+[git-merge](https://git-scm.com/docs/git-merge),
+[git-push](https://git-scm.com/docs/git-push) — rather than against assumptions: that is
+where "untracked files do not block a fast-forward" and "`--staged` restores from `HEAD`"
+come from.
 
 ### Adding a tool
 
@@ -128,6 +159,8 @@ before the message is finalized, and a non-zero exit aborts the commit.
    JSON Schema descriptions) and a `#[tool]` method in `apps/gitops-mcp/src/server.rs`.
 3. Return `Ok(CallToolResult::error(...))` for failures the caller should read; reserve
    `Err(ErrorData)` for genuine server faults, which clients render opaquely.
+4. Expose the fewest inputs that let a caller say what they want. If a parameter's only
+   use is to weaken a check, it does not belong in the schema — see invariant 6.
 4. Attach structured output with `with_structured` so callers get both prose and JSON.
 
 ### Manual protocol check

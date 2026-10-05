@@ -16,13 +16,23 @@ what the hook reported, the agent retries with `--no-verify`, clears the hook's 
 bit, or points `core.hooksPath` at nothing. The commit lands, your guardrails are gone,
 and nobody mentions it.
 
-Either way the cost is the same: more time spent policing `git config` and hooks than
-reviewing code.
+The same shape of problem turns up on every git operation an agent cannot safely improvise:
+discarding a file, landing a branch, publishing a commit. Each has a safe form and a
+destructive one, the destructive one is a single flag away, and an agent that is stuck will
+find that flag. Meanwhile the operations that *are* safe get stuck behind permission
+prompts, so you end up approving `git` by hand all session.
+
+Either way the cost is the same: more time spent policing `git config`, hooks and
+`git` invocations than reviewing code.
 
 `gitops` takes the decision away from the agent. Your signing key is the source of truth,
 config is reconciled to the key before every commit, and there is no unsigned fallback to
-reach for. The agent gets one tool that always works and no reason to touch `git config`
-at all — so "may I change your git config?" stops being a question anyone has to answer.
+reach for. Each tool does only the safe form of its operation, and the dangerous variants
+are not parameters that default to off — they are absent, so there is no knob to reach for.
+
+What is left is a set of tools that always work and are safe to approve once, and no reason
+for the agent to touch `git config` or build its own `git` command line. "May I change your
+git config?" stops being a question anyone has to answer.
 
 ## What it does
 
@@ -31,6 +41,9 @@ at all — so "may I change your git config?" stops being a question anyone has 
 | `git_signing_status` | Reports `git config commit.gpgsign` and `git config user.signingkey` verbatim, every time, plus the value at each scope, the signing key's own identity, and any drift. |
 | `git_signing_enforce` | Rewrites global git config to match the signing key. `dry_run: true` shows the plan without writing. |
 | `commit` | Stages `files` (or everything with `all: true`), reconciles config, and creates a **signed** commit. Never falls back to an unsigned commit. |
+| `restore` | Throws away local changes to named paths — the safe form of `git checkout -- <path>`. Saves what it discards as a recovery patch first. |
+| `merge_ff_only` | Fast-forwards the current branch onto a ref. Refuses on a dirty tree or diverged history instead of improvising a resolution. |
+| `push` | Publishes the current branch, and only if every commit it would publish is signed. |
 
 The rules it enforces:
 
@@ -45,7 +58,15 @@ The rules it enforces:
   leaves your hooks and config exactly as they were.
 * A hook git will *not* run — missing `core.hooksPath`, or a hook without its executable
   bit — is reported as drift, because a silently skipped hook looks just like a passing
-  one.
+  one. `pre-commit` and `pre-push` are both checked.
+* `restore` needs explicit paths; it cannot wipe the tree. Whatever it discards is written
+  to a patch under `.git/` first, and if that patch cannot be written, nothing is restored.
+* `merge_ff_only` only fast-forwards. Diverged branches come back as a refusal naming the
+  divergence, never as a merge commit, a rebase or a reset.
+* `push` refuses to publish an unsigned commit whoever made it, pushes only the branch
+  you are on, and never rewrites or removes anything already on the remote.
+
+[Safe git operations](docs/guides/safe-git-operations.md) covers the last three in full.
 
 ## Getting started
 
@@ -141,15 +162,35 @@ feature, not a bug:
 a git hook rejected the commit:
 lint: trailing whitespace in README.md
 
-Fix what the hook reports, then retry. Do not bypass the hook with `--no-verify`, do not
-disable or delete the hook, and do not turn off commit signing — the hook failure is the
-real problem and it is unrelated to signing.
+Fix what the hook reports, then retry. Do not bypass the hook, do not disable, delete or
+un-execute it, do not repoint `core.hooksPath`, and do not turn off commit signing — the
+hook failure is the real problem and it is unrelated to signing.
+```
+
+### The other three operations
+
+```jsonc
+{ "files": ["apps/web/e2e/canvas-touch.spec.ts"] }  // restore
+{ "ref": "069-a-board-you-can-touch" }              // merge_ff_only
+{ "remote": "origin" }                              // push
+```
+
+Each one refuses rather than improvising, and the refusal says what to do instead:
+
+```
+refusing to push `main`: 1 of its commits are not signed:
+  bbbb2222 N chore: snuck in
+
+Sign them before publishing. An unsigned commit on a shared branch is the exact outcome
+this server exists to prevent, so do not work around this.
 ```
 
 ## Documentation
 
 * [Git signing governance](docs/guides/git-signing-governance.md) — every rule, what it
   will and will not touch, and troubleshooting.
+* [Safe git operations](docs/guides/safe-git-operations.md) — `restore`, `merge_ff_only`
+  and `push`: what each refuses, and how to recover a discarded change.
 * [Using it with Claude Code](docs/guides/claude-code.md) — installation and the
   `CLAUDE.md` rules that make the agent reach for it.
 * [CONTRIBUTING.md](CONTRIBUTING.md) — architecture and development.

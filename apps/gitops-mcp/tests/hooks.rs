@@ -10,7 +10,7 @@
 
 mod sandbox;
 
-use sandbox::{EMAIL, Sandbox, set_executable};
+use sandbox::{EMAIL, Sandbox, is_executable, set_executable};
 use serde_json::json;
 
 const FAILING_HOOK: &str = "#!/bin/sh\necho 'lint: trailing whitespace in README.md' >&2\nexit 1\n";
@@ -35,8 +35,10 @@ fn a_failing_pre_commit_hook_aborts_the_commit_and_explains_why() {
     assert!(result.is_error(), "expected a tool error, got: {text}");
     // The hook's own output is the actionable part.
     assert!(text.contains("trailing whitespace"), "{text}");
-    assert!(text.contains("--no-verify"), "{text}");
+    assert!(text.contains("Fix what the hook reports"), "{text}");
     assert!(text.contains("unrelated to signing"), "{text}");
+    // The rule is stated without naming the flag that breaks it.
+    assert!(!text.contains("--no-verify"), "{text}");
 
     // Nothing was committed.
     assert_eq!(sandbox.git(&["rev-list", "--all", "--count"]), "0");
@@ -141,9 +143,4 @@ fn a_clean_sandbox_reports_no_drift() {
 
     assert!(text.contains("Drift: none"), "{text}");
     assert_eq!(result.structured()["signing_available"], json!(true));
-}
-
-fn is_executable(path: &std::path::Path) -> bool {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path).unwrap().permissions().mode() & 0o111 != 0
 }

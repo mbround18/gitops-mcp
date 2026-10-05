@@ -75,7 +75,7 @@ pub enum Drift {
     /// `core.hooksPath` points at a directory that does not exist, so no hook can run.
     HooksDirectoryMissing { path: String },
     /// A `pre-commit` hook exists but is not executable, so git silently skips it.
-    PreCommitNotExecutable { path: String },
+    HookNotExecutable { hook: String, path: String },
 }
 
 impl Drift {
@@ -100,8 +100,8 @@ impl Drift {
             Self::HooksDirectoryMissing { path } => format!(
                 "core.hooksPath points at `{path}`, which does not exist, so no hook can run"
             ),
-            Self::PreCommitNotExecutable { path } => {
-                format!("the pre-commit hook `{path}` is not executable, so git skips it silently")
+            Self::HookNotExecutable { hook, path } => {
+                format!("the {hook} hook `{path}` is not executable, so git skips it silently")
             }
         }
     }
@@ -120,12 +120,19 @@ pub struct HooksStatus {
     pub directory_exists: bool,
     pub pre_commit_present: bool,
     pub pre_commit_executable: bool,
+    pub pre_push_present: bool,
+    pub pre_push_executable: bool,
 }
 
 impl HooksStatus {
     /// True when a `pre-commit` hook is in place and git will actually run it.
     pub fn pre_commit_active(&self) -> bool {
         self.pre_commit_present && self.pre_commit_executable
+    }
+
+    /// True when a `pre-push` hook is in place and git will actually run it.
+    pub fn pre_push_active(&self) -> bool {
+        self.pre_push_present && self.pre_push_executable
     }
 }
 
@@ -303,24 +310,33 @@ fn read_hooks(
     };
 
     let dir_info = runner.path_info(&resolve(&dir));
-    let pre_commit = resolve(&format!("{}/pre-commit", dir.trim_end_matches('/')));
-    let hook_info = runner.path_info(&pre_commit);
-
     if !dir_info.exists && hooks_path.effective.is_some() {
         drift.push(Drift::HooksDirectoryMissing { path: dir.clone() });
     }
-    if hook_info.exists && !hook_info.executable {
-        drift.push(Drift::PreCommitNotExecutable {
-            path: pre_commit.display().to_string(),
-        });
-    }
+
+    // A hook git cannot run is worth reporting: it looks like protection and is not.
+    let mut probe = |hook: &str| {
+        let path = resolve(&format!("{}/{hook}", dir.trim_end_matches('/')));
+        let info = runner.path_info(&path);
+        if info.exists && !info.executable {
+            drift.push(Drift::HookNotExecutable {
+                hook: hook.to_owned(),
+                path: path.display().to_string(),
+            });
+        }
+        info
+    };
+    let pre_commit = probe("pre-commit");
+    let pre_push = probe("pre-push");
 
     Ok(HooksStatus {
         hooks_path,
         directory,
         directory_exists: dir_info.exists,
-        pre_commit_present: hook_info.exists,
-        pre_commit_executable: hook_info.executable,
+        pre_commit_present: pre_commit.exists,
+        pre_commit_executable: pre_commit.executable,
+        pre_push_present: pre_push.exists,
+        pre_push_executable: pre_push.executable,
     })
 }
 

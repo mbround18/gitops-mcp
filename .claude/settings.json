@@ -2,6 +2,7 @@
   "permissions": {
     "allow": [
       "mcp__gitops__git_signing_status",
+      "mcp__gitops__merge_ff_only",
       "Bash(make:*)",
       "Bash(cargo test:*)",
       "Bash(cargo clippy:*)",

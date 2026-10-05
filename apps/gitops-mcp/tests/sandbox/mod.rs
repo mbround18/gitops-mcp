@@ -6,6 +6,10 @@
 //!
 //! Signing uses a freshly generated, passphrase-free SSH key (`gpg.format=ssh`), so real
 //! signed commits happen without a passphrase prompt.
+//!
+//! Each test binary compiles this module separately and uses only part of it, so unused
+//! helpers here are expected rather than dead.
+#![allow(dead_code)]
 
 use std::{
     io::{BufRead, BufReader, Write},
@@ -76,6 +80,11 @@ impl Sandbox {
         self.home.path()
     }
 
+    /// The sandbox HOME, for building paths outside the repository.
+    pub fn home_path(&self) -> &Path {
+        self.home.path()
+    }
+
     /// Write a file inside the repository.
     pub fn write(&self, relative: &str, contents: &str) {
         let path = self.repo.join(relative);
@@ -92,6 +101,48 @@ impl Sandbox {
         std::fs::write(&path, script).unwrap();
         set_executable(&path, true);
         path
+    }
+
+    /// Create a bare repository inside the sandbox and add it as a remote, so push tests
+    /// are real pushes with no network involved.
+    pub fn bare_remote(&self, name: &str) -> PathBuf {
+        let path = self.home().join(format!("{name}.git"));
+        std::fs::create_dir_all(&path).unwrap();
+        run(&path, self.home(), "git", &["init", "-q", "--bare"]);
+        self.git(&["remote", "add", name, path.to_str().unwrap()]);
+        path
+    }
+
+    /// Run a git command in the bare remote at `path` and return trimmed stdout.
+    pub fn remote_git(&self, path: &Path, args: &[&str]) -> String {
+        self.run_in(path, args)
+    }
+
+    /// Run a git command in any directory inside the sandbox.
+    pub fn run_in(&self, dir: &Path, args: &[&str]) -> String {
+        let out = command(dir, self.home(), "git", args)
+            .output()
+            .expect("git");
+        assert!(
+            out.status.success(),
+            "git {args:?} in {dir:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    }
+
+    /// Clone `source` to `target`, standing in for a second developer.
+    pub fn clone_to(&self, target: &Path, source: &Path) {
+        std::fs::create_dir_all(target).unwrap();
+        self.run_in(
+            self.home(),
+            &[
+                "clone",
+                "-q",
+                source.to_str().unwrap(),
+                target.to_str().unwrap(),
+            ],
+        );
     }
 
     /// Run a git command in the sandbox and return trimmed stdout.
@@ -203,6 +254,13 @@ impl ToolResult {
     pub fn structured(&self) -> &serde_json::Value {
         &self.0["structuredContent"]
     }
+}
+
+pub fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
 }
 
 pub fn set_executable(path: &Path, executable: bool) {

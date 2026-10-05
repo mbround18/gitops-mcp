@@ -1,7 +1,8 @@
 //! The outbound port, and its adapters.
 //!
 //! The domain logic in this crate never touches `std::process` or `std::fs` directly; it
-//! talks to [`CommandRunner`], which covers both running a process and probing a path.
+//! talks to [`CommandRunner`], which covers running a process, probing a path, and
+//! writing a file.
 //! Tests substitute a scripted runner, so every behaviour below is deterministic without
 //! a real repository, key ring, or filesystem.
 
@@ -54,6 +55,10 @@ pub trait CommandRunner {
 
     /// Probe a path. A path that cannot be inspected reads as absent.
     fn path_info(&self, path: &Path) -> PathInfo;
+
+    /// Write `contents` to `path`, creating parent directories. Used for the safety net
+    /// kept before a destructive operation, so a failure here must abort that operation.
+    fn write_file(&self, path: &Path, contents: &str) -> std::io::Result<()>;
 }
 
 /// Adapter that shells out to the real binaries on `PATH`.
@@ -94,6 +99,14 @@ impl CommandRunner for SystemRunner {
             Err(_) => PathInfo::default(),
         }
     }
+
+    fn write_file(&self, path: &Path, contents: &str) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        tracing::debug!(path = %path.display(), bytes = contents.len(), "writing file");
+        std::fs::write(path, contents)
+    }
 }
 
 /// Test adapter: replays canned output keyed by `"program arg arg ..."`.
@@ -102,6 +115,8 @@ pub struct ScriptedRunner {
     responses: HashMap<String, CommandOutput>,
     paths: HashMap<PathBuf, PathInfo>,
     calls: std::cell::RefCell<Vec<String>>,
+    writes: std::cell::RefCell<Vec<(PathBuf, String)>>,
+    write_fails: bool,
 }
 
 impl ScriptedRunner {
@@ -128,9 +143,21 @@ impl ScriptedRunner {
         self
     }
 
+    /// Make every [`CommandRunner::write_file`] fail, to prove a destructive operation
+    /// aborts when its safety net cannot be written.
+    pub fn failing_writes(mut self) -> Self {
+        self.write_fails = true;
+        self
+    }
+
     /// Every command line this runner was asked to run, in order.
     pub fn calls(&self) -> Vec<String> {
         self.calls.borrow().clone()
+    }
+
+    /// Every file this runner was asked to write, in order.
+    pub fn writes(&self) -> Vec<(PathBuf, String)> {
+        self.writes.borrow().clone()
     }
 
     fn key(program: &str, args: &[&str]) -> String {
@@ -161,6 +188,16 @@ impl CommandRunner for ScriptedRunner {
 
     fn path_info(&self, path: &Path) -> PathInfo {
         self.paths.get(path).copied().unwrap_or_default()
+    }
+
+    fn write_file(&self, path: &Path, contents: &str) -> std::io::Result<()> {
+        if self.write_fails {
+            return Err(std::io::Error::other("scripted write failure"));
+        }
+        self.writes
+            .borrow_mut()
+            .push((path.to_path_buf(), contents.to_owned()));
+        Ok(())
     }
 }
 

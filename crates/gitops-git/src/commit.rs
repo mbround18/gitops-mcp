@@ -113,7 +113,10 @@ pub fn commit(runner: &dyn CommandRunner, request: &CommitRequest) -> Result<Com
         // is refused, and misreading some other failure as a hook failure still points at
         // the right output — whereas missing a hook failure invites a `--no-verify` retry.
         if governance.status.hooks.pre_commit_active() {
-            return Err(Error::HookRejected { detail: combined });
+            return Err(Error::HookRejected {
+                action: "commit".into(),
+                detail: combined,
+            });
         }
         return Err(Error::CommitFailed { detail: combined });
     }
@@ -436,15 +439,18 @@ mod hook_tests {
         );
         let err = commit(&runner, &request()).unwrap_err();
         match &err {
-            Error::HookRejected { detail } => {
+            Error::HookRejected { detail, .. } => {
                 // The hook's own complaint has to survive, or there is nothing to fix.
                 assert!(detail.contains("unused variable"), "{detail}");
             }
             other => panic!("expected a hook rejection, got {other}"),
         }
         let message = err.to_string();
-        assert!(message.contains("--no-verify"), "{message}");
+        assert!(message.contains("Fix what the hook reports"), "{message}");
         assert!(message.contains("unrelated to signing"), "{message}");
+        // The refusal states the rule without naming the flag that breaks it: spelling
+        // out the bypass is how a caller learns the bypass exists.
+        assert!(!message.contains("--no-verify"), "{message}");
     }
 
     #[test]
@@ -515,7 +521,7 @@ mod hook_tests {
             status
                 .drift
                 .iter()
-                .any(|d| matches!(d, crate::Drift::PreCommitNotExecutable { .. })),
+                .any(|d| matches!(d, crate::Drift::HookNotExecutable { .. })),
             "{:?}",
             status.drift
         );

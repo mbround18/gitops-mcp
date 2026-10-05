@@ -16,10 +16,15 @@ pay for both:
 2. **It asks you instead.** Every `git config` write becomes a permission prompt you have
    to read and adjudicate. Multiply by a long session and you have spent more time
    arbitrating config changes than steering the work.
+3. **You end up running git yourself.** Discarding a file, fast-forwarding a branch and
+   pushing are blocked often enough that they turn into a stream of `!` shell escapes you
+   type by hand — the one place where none of the checks apply.
 
 Installing the server fixes the first problem — `commit` can't produce an unsigned commit
-and reconciles config to your key first. Adding the `CLAUDE.md` rules below fixes the
-second, by removing the agent's reason to touch `git config` at all.
+and reconciles config to your key first. The `restore`, `merge_ff_only` and `push` tools fix
+the third, by making the safe form of each operation the one the agent can reach. Adding
+the `CLAUDE.md` rules below fixes the second, by removing the agent's reason to touch
+`git config` at all.
 
 ## What this repository ships
 
@@ -58,7 +63,9 @@ claude mcp list
 ```
 
 The tools appear as `mcp__gitops__git_signing_status`,
-`mcp__gitops__git_signing_enforce`, and `mcp__gitops__commit`.
+`mcp__gitops__git_signing_enforce`, `mcp__gitops__commit`, `mcp__gitops__restore`,
+`mcp__gitops__merge_ff_only` and `mcp__gitops__push`. The last three are covered in
+[Safe git operations](safe-git-operations.md).
 
 > A session that was already running when you registered the server will not see it. Tool
 > names resolve at startup, so start a new session.
@@ -90,6 +97,15 @@ to `~/.claude/CLAUDE.md` so it prefers the tools. Under your git practices:
     problem and is unrelated to signing. Never use `--no-verify`, never delete a hook,
     never `chmod -x` one, and never repoint `core.hooksPath`. If the hook's complaint
     cannot be fixed, report it and stop.
+- **Restore, merge and push through the `gitops` MCP server too.** Use
+  `mcp__gitops__restore` (`{files: [...]}`) instead of `git checkout -- <path>` or
+  `git restore`, `mcp__gitops__merge_ff_only` (`{ref}`) instead of `git merge`, and
+  `mcp__gitops__push` (`{}`, or `{remote}`) instead of `git push`.
+  - These tools do only the safe form of each operation. **When one refuses, the refusal is
+    the answer:** report it and stop. Do not reach for a shell to run the same operation
+    without the checks, and do not look for a parameter that makes the refusal go away.
+  - Never force-push, never push a branch with an unsigned commit, and never reconcile
+    diverged branches on your own — a rebase or a merge commit is the author's call.
 ```
 
 Each clause is there for a specific failure that happens without it:
@@ -102,6 +118,8 @@ Each clause is there for a specific failure that happens without it:
 | `user.name` is a preference | Your handle being renamed to your key's uid name |
 | Never `allow_unsigned` | The escape hatch being used as a fallback |
 | Fix what the hook reported | `--no-verify`, a deleted hook, or a `chmod -x` that makes a failing hook "pass" |
+| Restore/merge/push through the server | A hand-typed `git` that discards work with no copy kept, creates an unwanted merge commit, or publishes an unsigned commit |
+| The refusal is the answer | A refusal being re-run as a raw shell command until it succeeds |
 
 ### Why rules and not just the server
 
@@ -118,13 +136,23 @@ If you allowlist the server's read-only tool, status checks stop prompting. In
 ```jsonc
 {
   "permissions": {
-    "allow": ["mcp__gitops__git_signing_status"]
+    "allow": [
+      "mcp__gitops__git_signing_status",
+      "mcp__gitops__merge_ff_only"
+    ]
   }
 }
 ```
 
-Leave `mcp__gitops__commit` and `mcp__gitops__git_signing_enforce` prompting unless you
-want commits and config writes to happen unattended.
+`merge_ff_only` is a reasonable second entry: it refuses unless the merge is a pure
+fast-forward on a clean tree, so the worst outcome is a branch pointer moving to a commit
+that is already an ancestor-descendant of where it was.
+
+Leave `mcp__gitops__commit`, `mcp__gitops__git_signing_enforce`, `mcp__gitops__push` and
+`mcp__gitops__restore` prompting unless you want commits, config writes, publishing and
+discarding local edits to happen unattended. `restore` always saves a patch first, so an
+approved one is recoverable — but approving it is still the point at which you decide the
+work is disposable.
 
 ## Verifying it works
 

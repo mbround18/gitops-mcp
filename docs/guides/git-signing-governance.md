@@ -112,10 +112,9 @@ making on purpose.
 
 ## Hooks
 
-A failing [`pre-commit` hook](https://git-scm.com/docs/githooks) is the other place where
-signing gets sacrificed for convenience. The hook fails, and the next move is
-`--no-verify`, or `chmod -x`, or `core.hooksPath=/dev/null` — after which the commit
-succeeds, the guardrail is gone, and the original problem is still there.
+A failing [hook](https://git-scm.com/docs/githooks) is the other place where signing gets
+sacrificed for convenience. The `pre-commit` hook fails, the guardrail gets switched off so
+the commit lands, and the original problem is still there.
 
 `gitops` treats a hook rejection as a result, not an obstacle:
 
@@ -123,39 +122,45 @@ succeeds, the guardrail is gone, and the original problem is still there.
 a git hook rejected the commit:
 lint: trailing whitespace in README.md
 
-Fix what the hook reports, then retry. Do not bypass the hook with `--no-verify`, do not
-disable or delete the hook, and do not turn off commit signing — the hook failure is the
-real problem and it is unrelated to signing.
+Fix what the hook reports, then retry. Do not bypass the hook, do not disable, delete or
+un-execute it, do not repoint `core.hooksPath`, and do not turn off commit signing — the
+hook failure is the real problem and it is unrelated to signing.
 ```
 
 Everything the hook printed comes back, because that is the part you can act on. The
-commit is not retried, and nothing about your repository changes: the hook keeps its
+operation is not retried, and nothing about your repository changes: the hook keeps its
 executable bit, `core.hooksPath` is untouched, and `commit.gpgsign` stays `true`.
 
-There is no `no_verify` parameter, and the server never passes `--no-verify` to git, so
-neither you nor an agent can ask it to skip a hook — bypassing one is a decision you make
-deliberately with raw `git`.
+The same applies to `pre-push`. When a `pre-push` hook rejects a
+[`push`](safe-git-operations.md#push), the refusal says `rejected the push` instead, and
+nothing reaches the remote.
+
+There is no parameter for skipping a hook on any tool, so neither you nor an agent can ask
+this server to do it — running a hook-free git command is a decision you make deliberately
+yourself, outside this server.
 
 Note that hook failures and signing failures are different problems. A hook that rejects
 your commit has nothing to do with your key, and disabling signing will not make it pass.
 
 ### Hooks that cannot run
 
-`git_signing_status` also reports whether git will actually run your `pre-commit` hook,
-because a skipped hook is indistinguishable from a passing one:
+`git_signing_status` also reports whether git will actually run your hooks, because a
+skipped hook is indistinguishable from a passing one. Both governed hooks get a line:
 
 ```
 pre-commit hook: active (.git/hooks)
-pre-commit hook: present but NOT executable — git will skip it
-pre-commit hook: none
+pre-push hook: present but NOT executable — git will skip it
 ```
+
+The three possible values are `active (<hooks dir>)`, `present but NOT executable — git
+will skip it`, and `none`.
 
 Two cases are reported as drift:
 
 | Drift | Meaning |
 | --- | --- |
 | `hooks_directory_missing` | `core.hooksPath` points at a directory that does not exist, so no hook can run |
-| `pre_commit_not_executable` | the hook file is there but has no executable bit, so git skips it silently |
+| `hook_not_executable` | a hook file is there but has no executable bit, so git skips it silently; the entry names which hook (`pre-commit` or `pre-push`) and its path |
 
 Neither is auto-corrected. Both can be legitimate — a `core.hooksPath` of `.husky` before
 `pnpm install` has run, for instance — and deciding between "install the tooling",

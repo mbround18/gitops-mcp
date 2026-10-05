@@ -2,7 +2,10 @@
 
 use std::path::PathBuf;
 
-use gitops_git::{CommitRequest, SigningStatus, SystemRunner, reconcile};
+use gitops_git::{
+    CommitRequest, MergeRequest, PushRequest, RestoreRequest, SigningStatus, SystemRunner,
+    reconcile,
+};
 use rmcp::{
     ErrorData, ServerHandler,
     handler::server::wrapper::Parameters,
@@ -19,7 +22,16 @@ verbatim, plus every scope and any drift. Call it before touching git config.
 - `git_signing_enforce` rewrites global git config to match the signing key. Never edit \
 `user.email`, `user.name`, `user.signingkey` or `commit.gpgsign` yourself — call this instead.
 - `commit` stages files (or everything with `all`) and creates a signed commit, enforcing \
-config first. It never falls back to an unsigned commit.";
+config first. It never falls back to an unsigned commit.
+- `restore` throws away local changes to named paths, saving them first so they can be \
+recovered. Use it instead of `git checkout -- <path>`.
+- `merge_ff_only` fast-forwards the current branch onto a ref, and refuses if the branches \
+have diverged.
+- `push` publishes the current branch. It refuses to publish an unsigned commit.
+
+These tools do only the safe form of each operation. When one refuses, the refusal is the \
+answer: fix what it reports rather than reaching for a shell to do the same thing without \
+the checks.";
 
 /// Paths are resolved against the server's working directory unless `cwd` is given.
 #[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
@@ -49,11 +61,37 @@ pub struct CommitParams {
     /// Stage every change in the working tree, including untracked files.
     #[serde(default)]
     pub all: bool,
-    /// Permit an unsigned commit when no usable signing key exists. Leave this off:
-    /// an unsigned commit is a governance failure, not a fallback.
-    #[serde(default)]
-    pub allow_unsigned: bool,
     /// Repository directory to commit in. Defaults to the server's working directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+/// Deliberately minimal: naming paths is the only input, because every other knob
+/// `git restore` has either widens the blast radius or skips the recovery patch.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct RestoreParams {
+    /// Paths whose local changes should be thrown away. Required.
+    pub files: Vec<String>,
+    /// Repository directory to act in. Defaults to the server's working directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct MergeParams {
+    /// Branch, tag or commit to fast-forward the current branch to.
+    pub r#ref: String,
+    /// Repository directory to act in. Defaults to the server's working directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct PushParams {
+    /// Remote to push to. Defaults to `origin`.
+    #[serde(default)]
+    pub remote: Option<String>,
+    /// Repository directory to act in. Defaults to the server's working directory.
     #[serde(default)]
     pub cwd: Option<String>,
 }
@@ -139,7 +177,8 @@ impl GitOpsServer {
             message: params.message,
             files: params.files,
             all: params.all,
-            allow_unsigned: params.allow_unsigned,
+            // Not a parameter: a caller cannot ask this server for an unsigned commit.
+            allow_unsigned: false,
             cwd: params.cwd.map(PathBuf::from),
         };
 
@@ -165,9 +204,129 @@ impl GitOpsServer {
             }
             // A failed commit is the caller's problem to fix, so it comes back as a
             // tool-level error whose message the caller actually sees.
-            Err(err) => Ok(CallToolResult::error(vec![ContentBlock::text(
-                err.to_string(),
-            )])),
+            Err(err) => Ok(failed(err)),
+        }
+    }
+
+    #[tool(
+        name = "restore",
+        description = "Throw away local changes to specific paths, restoring them to their committed state — the safe form of `git checkout -- <path>`. Requires explicit paths; it cannot restore the whole tree. Whatever is discarded is saved as a recovery patch first, and if that patch cannot be written nothing is restored."
+    )]
+    fn restore(
+        &self,
+        Parameters(params): Parameters<RestoreParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = RestoreRequest {
+            files: params.files,
+            cwd: params.cwd.map(PathBuf::from),
+        };
+
+        match gitops_git::restore::restore(&self.runner, &request) {
+            Ok(outcome) => {
+                let mut text = format!(
+                    "Restored {} path(s) to their committed state.\n",
+                    outcome.restored.len()
+                );
+                match &outcome.backup {
+                    Some(path) => text.push_str(&format!(
+                        "Discarded changes saved to:\n  {path}\nRecover them with: git apply {path}\n"
+                    )),
+                    None => text.push_str("Nothing had changed, so nothing was discarded.\n"),
+                }
+                if !outcome.unchanged.is_empty() {
+                    text.push_str(&format!(
+                        "Already clean: {}\n",
+                        outcome.unchanged.join(", ")
+                    ));
+                }
+                Ok(with_structured(text, &outcome))
+            }
+            Err(err) => Ok(failed(err)),
+        }
+    }
+
+    #[tool(
+        name = "merge_ff_only",
+        description = "Fast-forward the current branch onto a ref (`git merge --ff-only`). Refuses if the work tree has uncommitted changes, if the ref is unknown, or if the branches have diverged. Because it only ever fast-forwards, no commit can be lost or rewritten and no merge commit is created."
+    )]
+    fn merge_ff_only(
+        &self,
+        Parameters(params): Parameters<MergeParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = MergeRequest {
+            r#ref: params.r#ref,
+            cwd: params.cwd.map(PathBuf::from),
+        };
+
+        match gitops_git::merge::merge_ff_only(&self.runner, &request) {
+            Ok(outcome) => {
+                let branch = outcome.branch.as_deref().unwrap_or("HEAD");
+                let mut text = if outcome.already_current {
+                    format!("`{branch}` already contains `{}`.\n", outcome.merged)
+                } else {
+                    format!(
+                        "Fast-forwarded `{branch}` to `{}`.\n{} → {}\n",
+                        outcome.merged,
+                        short(outcome.before.as_deref()),
+                        short(outcome.after.as_deref()),
+                    )
+                };
+                if !outcome.output.is_empty() {
+                    text.push_str(&outcome.output);
+                    text.push('\n');
+                }
+                Ok(with_structured(text, &outcome))
+            }
+            Err(err) => Ok(failed(err)),
+        }
+    }
+
+    #[tool(
+        name = "push",
+        description = "Publish the current branch to a remote (default `origin`). It pushes only that branch, only when every commit it would publish is signed, and only when the remote can fast-forward to it; otherwise it refuses and explains why. Nothing already on the remote is ever rewritten or removed."
+    )]
+    fn push(
+        &self,
+        Parameters(params): Parameters<PushParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = PushRequest {
+            remote: params.remote,
+            cwd: params.cwd.map(PathBuf::from),
+        };
+
+        match gitops_git::push::push(&self.runner, &request) {
+            Ok(outcome) => {
+                let mut text = if outcome.up_to_date {
+                    format!(
+                        "`{}` is already up to date on `{}`; nothing to push.\n",
+                        outcome.branch, outcome.remote
+                    )
+                } else {
+                    format!(
+                        "Pushed `{}` to `{}` — {} commit(s), all signed.\n",
+                        outcome.branch,
+                        outcome.remote,
+                        outcome.published.len()
+                    )
+                };
+                if outcome.created_remote_branch {
+                    text.push_str("Created the branch on the remote and set up tracking.\n");
+                }
+                for commit in &outcome.published {
+                    text.push_str(&format!(
+                        "  {} {} {}\n",
+                        &commit.commit[..commit.commit.len().min(8)],
+                        commit.verdict,
+                        commit.subject
+                    ));
+                }
+                if !outcome.output.is_empty() {
+                    text.push_str(&outcome.output);
+                    text.push('\n');
+                }
+                Ok(with_structured(text, &outcome))
+            }
+            Err(err) => Ok(failed(err)),
         }
     }
 }
@@ -201,7 +360,19 @@ fn summarize(status: &SigningStatus) -> String {
     }
     out.push_str(&format!(
         "pre-commit hook: {}\n",
-        describe_pre_commit(&status.hooks)
+        describe_hook(
+            &status.hooks,
+            status.hooks.pre_commit_present,
+            status.hooks.pre_commit_executable
+        )
+    ));
+    out.push_str(&format!(
+        "pre-push hook: {}\n",
+        describe_hook(
+            &status.hooks,
+            status.hooks.pre_push_present,
+            status.hooks.pre_push_executable
+        )
     ));
     out.push_str(&format!(
         "git user: {} <{}>\n",
@@ -222,14 +393,27 @@ fn summarize(status: &SigningStatus) -> String {
 
 /// A hook git will not run is worth naming explicitly: it is indistinguishable from a
 /// hook that passes.
-fn describe_pre_commit(hooks: &gitops_git::HooksStatus) -> String {
-    match (hooks.pre_commit_present, hooks.pre_commit_executable) {
+fn describe_hook(hooks: &gitops_git::HooksStatus, present: bool, executable: bool) -> String {
+    match (present, executable) {
         (true, true) => format!(
             "active ({})",
             hooks.directory.as_deref().unwrap_or("unknown hooks dir")
         ),
         (true, false) => "present but NOT executable — git will skip it".to_owned(),
         (false, _) => "none".to_owned(),
+    }
+}
+
+/// A refused operation comes back as a tool error rather than a protocol error, so the
+/// caller reads the reason and what to do about it instead of an opaque failure.
+fn failed(err: gitops_git::Error) -> CallToolResult {
+    CallToolResult::error(vec![ContentBlock::text(err.to_string())])
+}
+
+fn short(id: Option<&str>) -> String {
+    match id {
+        Some(id) => id[..id.len().min(8)].to_owned(),
+        None => "(unknown)".to_owned(),
     }
 }
 
