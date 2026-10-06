@@ -168,23 +168,17 @@ pub fn workspace_scan(
             detail: "current repository has no usable directory name".into(),
         })?
         .to_owned();
-
-    let mut dirs: Vec<PathBuf> = fs::read_dir(&base_dir)
-        .map_err(|e| Error::WorkspaceOperationFailed {
-            detail: format!(
-                "could not read base directory `{}`: {e}",
-                base_dir.display()
-            ),
-        })?
-        .filter_map(|entry| entry.ok().map(|e| e.path()))
-        .filter(|p| p.is_dir())
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .map(|name| name.starts_with(&format!("{prefix}-")) && name != current_name)
-                .unwrap_or(false)
-        })
-        .filter(|p| p.join(".git").exists())
+    let inv =
+        workspaceops::inventory(&current_repo, &prefix, Some(&base_dir), &[]).map_err(|e| {
+            Error::WorkspaceOperationFailed {
+                detail: format!("workspace inventory failed: {e}"),
+            }
+        })?;
+    let mut dirs: Vec<PathBuf> = inv
+        .siblings
+        .into_iter()
+        .filter(|s| s.has_git_dir && s.name != current_name)
+        .map(|s| PathBuf::from(s.path))
         .collect();
     dirs.sort();
 
