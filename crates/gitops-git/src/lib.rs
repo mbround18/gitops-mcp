@@ -26,6 +26,7 @@ pub mod push;
 pub mod restore;
 pub mod runner;
 pub mod status;
+pub mod workspace;
 
 pub use commit::{CommitOutcome, CommitRequest};
 pub use diff::{ChangedFile, DiffOutcome, DiffRequest, Truncation, diff};
@@ -35,6 +36,13 @@ pub use push::{CommitSignature, PushOutcome, PushRequest, push};
 pub use restore::{RestoreOutcome, RestoreRequest, restore};
 pub use runner::{CommandRunner, SystemRunner};
 pub use status::{Drift, HooksStatus, ScopedValue, SigningIdentity, SigningStatus};
+pub use workspace::{
+    CleanupMode, WorkspaceApplyOutcome, WorkspaceApplyRequest, WorkspaceCleanupAction,
+    WorkspaceCleanupOutcome, WorkspaceCleanupRequest, WorkspaceDiffExportOutcome,
+    WorkspaceDiffExportRequest, WorkspaceScanOutcome, WorkspaceScanRequest, WorkspaceSummary,
+    WorkspaceValidateOutcome, WorkspaceValidateRequest, WorkspaceValidateStep, workspace_apply,
+    workspace_cleanup, workspace_diff_export, workspace_scan, workspace_validate,
+};
 
 /// Errors this crate can produce.
 #[derive(Debug, thiserror::Error)]
@@ -142,6 +150,8 @@ pub enum Error {
     PushFailed { detail: String },
     #[error("diff failed: {detail}")]
     DiffFailed { detail: String },
+    #[error("workspace operation failed: {detail}")]
+    WorkspaceOperationFailed { detail: String },
 }
 
 impl From<std::io::Error> for Error {

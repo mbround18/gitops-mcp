@@ -3,8 +3,10 @@
 use std::path::PathBuf;
 
 use gitops_git::{
-    CommitRequest, DiffRequest, MergeRequest, PushRequest, RestoreRequest, SigningStatus,
-    SystemRunner, reconcile,
+    CleanupMode, CommitRequest, DiffRequest, MergeRequest, PushRequest, RestoreRequest,
+    SigningStatus, SystemRunner, WorkspaceApplyRequest, WorkspaceCleanupRequest,
+    WorkspaceDiffExportRequest, WorkspaceScanRequest, WorkspaceValidateRequest, reconcile,
+    workspace_apply, workspace_cleanup, workspace_diff_export, workspace_scan, workspace_validate,
 };
 use rmcp::{
     ErrorData, ServerHandler,
@@ -31,6 +33,11 @@ have diverged.
 - `diff` summarises what changed — a line per file with its status and counts — and \
 returns the hunks only when `patch` is set, under a line cap. Prefer it over `git diff`, \
 whose full output is rarely what the question needed.
+- `workspace_scan` reports sibling workspace branch/divergence/dirty state in one call.
+- `workspace_diff_export` writes a tracked-change patch from a sibling workspace.
+- `workspace_apply` applies or checks a patch in the current repository.
+- `workspace_cleanup` removes/quarantines sibling workspaces only with explicit confirmation.
+- `workspace_validate` runs one or more validation commands and fails fast.
 
 These tools do only the safe form of each operation. When one refuses, the refusal is the \
 answer: fix what it reports rather than reaching for a shell to do the same thing without \
@@ -123,6 +130,82 @@ pub struct DiffParams {
     #[serde(default)]
     pub max_lines: Option<usize>,
     /// Repository directory to act in. Defaults to the server's working directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct WorkspaceScanParams {
+    /// Prefix used to match sibling directories (`<prefix>-*`). Defaults to `ThunderForgeVTT`.
+    #[serde(default)]
+    pub prefix: Option<String>,
+    /// Parent directory containing sibling workspaces. Defaults to the current repo parent.
+    #[serde(default)]
+    pub base_dir: Option<String>,
+    /// Repository directory to anchor relative paths. Defaults to the server's working directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct WorkspaceDiffExportParams {
+    /// Sibling workspace path to export from.
+    pub workspace: String,
+    /// Destination patch file path.
+    pub output: String,
+    /// Git ref to diff against in the source workspace. Defaults to `HEAD`.
+    #[serde(default)]
+    pub base_ref: Option<String>,
+    /// Repository directory to anchor relative paths. Defaults to the server's working directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct WorkspaceApplyParams {
+    /// Patch file to apply or check.
+    pub patch: String,
+    /// Validate patch applicability without applying it.
+    #[serde(default)]
+    pub dry_run: bool,
+    /// Try a 3-way merge when context does not match exactly.
+    #[serde(default)]
+    pub three_way: bool,
+    /// Update index while applying.
+    #[serde(default)]
+    pub index: bool,
+    /// Repository directory to apply in. Defaults to the server's working directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct WorkspaceCleanupParams {
+    /// Prefix used to match sibling directories (`<prefix>-*`). Defaults to `ThunderForgeVTT`.
+    #[serde(default)]
+    pub prefix: Option<String>,
+    /// Parent directory containing sibling workspaces. Defaults to the current repo parent.
+    #[serde(default)]
+    pub base_dir: Option<String>,
+    /// Required: true to allow cleanup.
+    #[serde(default)]
+    pub confirm: bool,
+    /// Cleanup mode: `delete` removes directories, `quarantine` moves them aside.
+    #[serde(default)]
+    pub mode: Option<String>,
+    /// Required when mode is `quarantine`: destination directory for moved workspaces.
+    #[serde(default)]
+    pub quarantine_dir: Option<String>,
+    /// Repository directory to anchor relative paths. Defaults to the server's working directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct WorkspaceValidateParams {
+    /// Shell commands to run in order. Fails fast on first non-zero exit.
+    pub commands: Vec<String>,
+    /// Repository directory to run validation from. Defaults to the server's working directory.
     #[serde(default)]
     pub cwd: Option<String>,
 }
@@ -418,6 +501,189 @@ impl GitOpsServer {
                         "[{} lines shown, {} cut: {}]\n",
                         cut.shown, cut.cut, cut.hint
                     ));
+                }
+                Ok(with_structured(text, &outcome))
+            }
+            Err(err) => Ok(failed(err)),
+        }
+    }
+
+    #[tool(
+        name = "workspace_scan",
+        description = "Enumerate sibling workspace checkouts (`<prefix>-*`) and report branch, HEAD, ahead/behind against the current repo HEAD, and dirty/tracked/untracked counts."
+    )]
+    fn workspace_scan(
+        &self,
+        Parameters(params): Parameters<WorkspaceScanParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = WorkspaceScanRequest {
+            prefix: params.prefix,
+            base_dir: params.base_dir.map(PathBuf::from),
+            cwd: params.cwd.map(PathBuf::from),
+        };
+        match workspace_scan(&self.runner, &request) {
+            Ok(outcome) => {
+                let mut text = format!(
+                    "Scanned {} workspace(s) under `{}` (prefix `{}`).\n",
+                    outcome.workspaces.len(),
+                    outcome.base_dir,
+                    outcome.prefix
+                );
+                text.push_str(
+                    "workspace | branch | ahead | behind | dirty | tracked | untracked | path\n",
+                );
+                text.push_str(
+                    "--------- | ------ | ----- | ------ | ----- | ------- | --------- | ----\n",
+                );
+                for w in &outcome.workspaces {
+                    text.push_str(&format!(
+                        "{} | {} | {} | {} | {} | {} | {} | {}\n",
+                        w.workspace,
+                        w.branch,
+                        w.ahead
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "n/a".into()),
+                        w.behind
+                            .map(|n| n.to_string())
+                            .unwrap_or_else(|| "n/a".into()),
+                        if w.dirty { "yes" } else { "no" },
+                        w.tracked_changes,
+                        w.untracked_changes,
+                        w.path
+                    ));
+                }
+                Ok(with_structured(text, &outcome))
+            }
+            Err(err) => Ok(failed(err)),
+        }
+    }
+
+    #[tool(
+        name = "workspace_diff_export",
+        description = "Export tracked changes from a sibling workspace into a patch file (`git diff --binary --full-index --patch <base_ref>`), and report untracked files not included in the patch."
+    )]
+    fn workspace_diff_export(
+        &self,
+        Parameters(params): Parameters<WorkspaceDiffExportParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = WorkspaceDiffExportRequest {
+            workspace: params.workspace,
+            output: params.output,
+            base_ref: params.base_ref,
+            cwd: params.cwd.map(PathBuf::from),
+        };
+        match workspace_diff_export(&self.runner, &request) {
+            Ok(outcome) => {
+                let mut text = format!(
+                    "Patch written: `{}` ({} bytes) from `{}` vs `{}`.\n",
+                    outcome.output, outcome.bytes, outcome.workspace, outcome.base_ref
+                );
+                if outcome.untracked_files.is_empty() {
+                    text.push_str("Untracked files excluded: none.\n");
+                } else {
+                    text.push_str("Untracked files excluded:\n");
+                    for file in &outcome.untracked_files {
+                        text.push_str(&format!("- {file}\n"));
+                    }
+                }
+                Ok(with_structured(text, &outcome))
+            }
+            Err(err) => Ok(failed(err)),
+        }
+    }
+
+    #[tool(
+        name = "workspace_apply",
+        description = "Apply a workspace patch in the current repository. Use `dry_run: true` to verify applicability without changing files."
+    )]
+    fn workspace_apply(
+        &self,
+        Parameters(params): Parameters<WorkspaceApplyParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = WorkspaceApplyRequest {
+            patch: params.patch,
+            dry_run: params.dry_run,
+            three_way: params.three_way,
+            index: params.index,
+            cwd: params.cwd.map(PathBuf::from),
+        };
+        match workspace_apply(&self.runner, &request) {
+            Ok(outcome) => {
+                let text = if outcome.dry_run {
+                    format!("Patch check succeeded: `{}`\n", outcome.patch)
+                } else {
+                    format!("Patch applied: `{}`\n", outcome.patch)
+                };
+                Ok(with_structured(text, &outcome))
+            }
+            Err(err) => Ok(failed(err)),
+        }
+    }
+
+    #[tool(
+        name = "workspace_cleanup",
+        description = "Delete or quarantine sibling workspaces (`<prefix>-*`) with explicit confirmation. Requires `confirm: true`; quarantine mode additionally requires `quarantine_dir`."
+    )]
+    fn workspace_cleanup(
+        &self,
+        Parameters(params): Parameters<WorkspaceCleanupParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = WorkspaceCleanupRequest {
+            prefix: params.prefix,
+            base_dir: params.base_dir.map(PathBuf::from),
+            confirm: params.confirm,
+            mode: match params.mode.as_deref() {
+                Some("quarantine") => CleanupMode::Quarantine,
+                Some("delete") | None => CleanupMode::Delete,
+                Some(other) => {
+                    return Ok(failed(gitops_git::Error::InvalidRequest(format!(
+                        "unknown cleanup mode `{other}` (expected `delete` or `quarantine`)"
+                    ))));
+                }
+            },
+            quarantine_dir: params.quarantine_dir,
+            cwd: params.cwd.map(PathBuf::from),
+        };
+        match workspace_cleanup(&request) {
+            Ok(outcome) => {
+                let mut text = format!("Cleanup mode: {:?}\n", outcome.mode);
+                if outcome.actions.is_empty() {
+                    text.push_str("No matching workspaces found.\n");
+                } else {
+                    for action in &outcome.actions {
+                        if let Some(target) = &action.target {
+                            text.push_str(&format!(
+                                "{}: {} -> {}\n",
+                                action.action, action.source, target
+                            ));
+                        } else {
+                            text.push_str(&format!("{}: {}\n", action.action, action.source));
+                        }
+                    }
+                }
+                Ok(with_structured(text, &outcome))
+            }
+            Err(err) => Ok(failed(err)),
+        }
+    }
+
+    #[tool(
+        name = "workspace_validate",
+        description = "Run one or more validation commands in order and fail fast on the first non-zero exit."
+    )]
+    fn workspace_validate(
+        &self,
+        Parameters(params): Parameters<WorkspaceValidateParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = WorkspaceValidateRequest {
+            commands: params.commands,
+            cwd: params.cwd.map(PathBuf::from),
+        };
+        match workspace_validate(&self.runner, &request) {
+            Ok(outcome) => {
+                let mut text = format!("Validation passed ({} command(s)).\n", outcome.steps.len());
+                for step in &outcome.steps {
+                    text.push_str(&format!("- [{}] {}\n", step.status, step.command));
                 }
                 Ok(with_structured(text, &outcome))
             }

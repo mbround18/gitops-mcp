@@ -45,6 +45,11 @@ git config?" stops being a question anyone has to answer.
 | `merge_ff_only` | Fast-forwards the current branch onto a ref. Refuses on a dirty tree or diverged history instead of improvising a resolution. |
 | `push` | Publishes the current branch, and only if every commit it would publish is signed. |
 | `diff` | Summarises what changed — a line per file with its status and counts — and returns the hunks only when `patch` is set, under a line cap. Read-only. |
+| `workspace_scan` | Enumerates sibling workspaces (`<prefix>-*`) and reports branch, divergence, and dirty state in one call. |
+| `workspace_diff_export` | Exports tracked changes from a sibling workspace into a patch file and reports untracked files excluded from that patch. |
+| `workspace_apply` | Applies a workspace patch in the current repository, or checks applicability with `dry_run`. |
+| `workspace_cleanup` | Deletes or quarantines sibling workspaces with mandatory explicit confirmation. |
+| `workspace_validate` | Runs one or more validation commands in order and fails fast on the first non-zero exit. |
 
 The rules it enforces:
 
