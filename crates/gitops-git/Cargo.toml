@@ -12,4 +12,4 @@ rust-version.workspace = true
 serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-workspaceops = { git = "https://github.com/mbround18/workspaceops-mcp.git", rev = "16e5e08ed7a79ad3dcff78631432bd456a2ec61f" }
+workspaceops = { git = "https://github.com/mbround18/workspaceops-mcp.git", rev = "482c4082b59821bd46ea2d5feb1e38dcf902c720" }
