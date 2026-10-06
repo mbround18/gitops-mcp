@@ -13,8 +13,12 @@
 //! [`restore::restore`] keeps a recoverable patch, [`merge::merge_ff_only`] only
 //! fast-forwards, [`push::push`] only publishes signed commits on the current branch —
 //! and none of them exposes a parameter that relaxes the rule.
+//!
+//! [`diff::diff`] is here for the opposite reason: it changes nothing, and exists so that
+//! "what did I change" costs a summary rather than a patch nobody budgeted for.
 
 pub mod commit;
+pub mod diff;
 pub mod governance;
 pub mod identity;
 pub mod merge;
@@ -24,6 +28,7 @@ pub mod runner;
 pub mod status;
 
 pub use commit::{CommitOutcome, CommitRequest};
+pub use diff::{ChangedFile, DiffOutcome, DiffRequest, Truncation, diff};
 pub use governance::{Correction, Reconciliation, reconcile};
 pub use merge::{MergeOutcome, MergeRequest, merge_ff_only};
 pub use push::{CommitSignature, PushOutcome, PushRequest, push};
@@ -135,6 +140,8 @@ pub enum Error {
     },
     #[error("push failed: {detail}")]
     PushFailed { detail: String },
+    #[error("diff failed: {detail}")]
+    DiffFailed { detail: String },
 }
 
 impl From<std::io::Error> for Error {

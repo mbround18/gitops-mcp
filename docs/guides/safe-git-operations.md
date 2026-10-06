@@ -10,7 +10,8 @@ Three git operations have a safe form and a destructive one, separated by a sing
 
 An agent that is stuck reaches for the second column, because it ends the error. The
 `restore`, `merge_ff_only` and `push` tools exist so the first column is the only one
-available.
+available. `diff`, at the end, is the read-only one: it changes nothing, and is here
+because an unbounded `git diff` is its own kind of damage.
 
 ## The shape of all three
 
@@ -140,6 +141,43 @@ author's call, and the tool reports it rather than deciding.
 
 The refspec is written out in full on both sides, so a `push.default` or `remote.*.push`
 setting cannot redirect the push somewhere you did not name.
+
+## `diff` — see what changed
+
+```jsonc
+{}                                  // the working tree against HEAD
+{ "staged": true }                  // what a commit would contain
+{ "rev": "main..topic" }            // a range
+{ "files": ["src"], "patch": true } // one path, with its hunks
+```
+
+The summary is the default answer:
+
+```
+2 file(s) changed in the working tree against `HEAD`, +13 -43
+  modified src/lib.rs +12 -3
+  deleted docs/old.md +0 -40
+```
+
+That is usually the whole question. `patch: true` adds the hunks, capped at `max_lines`
+(default 400), and a cap that bites says so:
+
+```
+[400 lines shown, 1 284 cut: name `files` to diff one path, or raise `max_lines`]
+```
+
+| Situation | What happens |
+| --- | --- |
+| a binary file changed | listed as `binary`, with no invented line counts |
+| a file was renamed | listed as `renamed`, with the path it came from |
+| nothing differs | reported as no changes, which is an answer rather than an error |
+| `rev` git does not know | refused, naming the ref |
+| `staged` and `rev` together | refused rather than guessed — they ask different questions |
+| a path that git could read as a revision or an option | refused before git sees it |
+
+Untracked files are not in a diff, by git's definition — ask `git_signing_status` or `find`
+for those. Nothing this tool runs can modify the repository: there is no `--force`, no
+`apply`, no `checkout`, and a test asserts the command lines it is allowed to run.
 
 ## Recovering a discarded change
 

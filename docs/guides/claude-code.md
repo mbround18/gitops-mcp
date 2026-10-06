@@ -64,8 +64,8 @@ claude mcp list
 
 The tools appear as `mcp__gitops__git_signing_status`,
 `mcp__gitops__git_signing_enforce`, `mcp__gitops__commit`, `mcp__gitops__restore`,
-`mcp__gitops__merge_ff_only` and `mcp__gitops__push`. The last three are covered in
-[Safe git operations](safe-git-operations.md).
+`mcp__gitops__merge_ff_only`, `mcp__gitops__push` and `mcp__gitops__diff`. The last four
+are covered in [Safe git operations](safe-git-operations.md).
 
 > A session that was already running when you registered the server will not see it. Tool
 > names resolve at startup, so start a new session.
@@ -100,7 +100,8 @@ to `~/.claude/CLAUDE.md` so it prefers the tools. Under your git practices:
 - **Restore, merge and push through the `gitops` MCP server too.** Use
   `mcp__gitops__restore` (`{files: [...]}`) instead of `git checkout -- <path>` or
   `git restore`, `mcp__gitops__merge_ff_only` (`{ref}`) instead of `git merge`, and
-  `mcp__gitops__push` (`{}`, or `{remote}`) instead of `git push`.
+  `mcp__gitops__push` (`{}`, or `{remote}`) instead of `git push`. Read a diff with
+  `mcp__gitops__diff` (`{}`, or `{patch: true}` for the hunks) instead of `git diff`.
   - These tools do only the safe form of each operation. **When one refuses, the refusal is
     the answer:** report it and stop. Do not reach for a shell to run the same operation
     without the checks, and do not look for a parameter that makes the refusal go away.

@@ -377,3 +377,75 @@ fn the_signing_identity_is_what_lands() {
         EMAIL
     );
 }
+
+// ---------------------------------------------------------------- diff
+
+#[test]
+fn diff_summarises_the_change_and_withholds_the_patch_until_asked() {
+    let sandbox = Sandbox::new();
+    let mut server = sandbox.server();
+    commit_all(&mut server, &sandbox.repo, "chore: seed");
+
+    sandbox.write("README.md", "# sandbox\nan edit\n");
+    sandbox.write("new.txt", "fresh\n");
+    let repo = sandbox.repo.to_str().unwrap().to_owned();
+
+    let summary = server.call("diff", json!({"cwd": repo}));
+    assert!(!summary.is_error(), "{}", summary.text());
+    let text = summary.text();
+    assert!(text.contains("modified README.md +1 -0"), "{text}");
+    assert!(text.contains("+1 -0\n"), "{text}");
+    // Untracked files are not a diff, and the patch is not in the summary.
+    assert!(!text.contains("new.txt"), "{text}");
+    assert!(!text.contains("@@"), "the hunks are opt-in: {text}");
+    assert_eq!(summary.structured()["added"], 1);
+    assert_eq!(summary.structured()["files"][0]["status"], "modified");
+
+    let patch = server.call("diff", json!({"cwd": repo, "patch": true}));
+    assert!(!patch.is_error(), "{}", patch.text());
+    assert!(patch.text().contains("@@"), "{}", patch.text());
+    assert!(patch.text().contains("+an edit"), "{}", patch.text());
+
+    // And nothing it did touched the working tree.
+    assert_eq!(
+        std::fs::read_to_string(sandbox.repo.join("README.md")).unwrap(),
+        "# sandbox\nan edit\n"
+    );
+    assert_eq!(sandbox.git(&["status", "--porcelain"]).lines().count(), 2);
+}
+
+#[test]
+fn diff_reads_the_index_and_a_range_and_reports_an_unknown_revision() {
+    let sandbox = Sandbox::new();
+    let mut server = sandbox.server();
+    commit_all(&mut server, &sandbox.repo, "chore: seed");
+    let repo = sandbox.repo.to_str().unwrap().to_owned();
+
+    sandbox.write("README.md", "# sandbox\nstaged\n");
+    sandbox.git(&["add", "README.md"]);
+
+    let staged = server.call("diff", json!({"cwd": repo, "staged": true}));
+    assert!(!staged.is_error(), "{}", staged.text());
+    assert!(
+        staged.text().contains("the index against `HEAD`"),
+        "{}",
+        staged.text()
+    );
+    assert_eq!(staged.structured()["files"][0]["path"], "README.md");
+
+    commit_all(&mut server, &sandbox.repo, "docs: stage");
+    let range = server.call("diff", json!({"cwd": repo, "rev": "HEAD~1..HEAD"}));
+    assert!(!range.is_error(), "{}", range.text());
+    assert_eq!(range.structured()["files"][0]["status"], "modified");
+
+    let clean = server.call("diff", json!({"cwd": repo}));
+    assert!(clean.text().contains("No changes"), "{}", clean.text());
+    assert_eq!(clean.structured()["unchanged"], true);
+
+    let unknown = server.call("diff", json!({"cwd": repo, "rev": "no-such-ref"}));
+    assert!(unknown.is_error(), "{}", unknown.text());
+    assert!(unknown.text().contains("not a ref"), "{}", unknown.text());
+
+    let both = server.call("diff", json!({"cwd": repo, "staged": true, "rev": "HEAD"}));
+    assert!(both.is_error(), "{}", both.text());
+}

@@ -37,6 +37,9 @@ Ports and adapters, with exactly one port:
 * `merge.rs` — fast-forward only, with the pre-flight checks that make a half-merge
   impossible.
 * `push.rs` — publish the current branch, gated on every commit being signed.
+* `diff.rs` — summarise a diff, and render the hunks only on request under a line cap. The
+  one read-only operation here: it exists because the unbounded `git diff` an agent would
+  otherwise run is its own kind of damage.
 
 ### Invariants
 

@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use gitops_git::{
-    CommitRequest, MergeRequest, PushRequest, RestoreRequest, SigningStatus, SystemRunner,
-    reconcile,
+    CommitRequest, DiffRequest, MergeRequest, PushRequest, RestoreRequest, SigningStatus,
+    SystemRunner, reconcile,
 };
 use rmcp::{
     ErrorData, ServerHandler,
@@ -28,6 +28,9 @@ recovered. Use it instead of `git checkout -- <path>`.
 - `merge_ff_only` fast-forwards the current branch onto a ref, and refuses if the branches \
 have diverged.
 - `push` publishes the current branch. It refuses to publish an unsigned commit.
+- `diff` summarises what changed — a line per file with its status and counts — and \
+returns the hunks only when `patch` is set, under a line cap. Prefer it over `git diff`, \
+whose full output is rarely what the question needed.
 
 These tools do only the safe form of each operation. When one refuses, the refusal is the \
 answer: fix what it reports rather than reaching for a shell to do the same thing without \
@@ -91,6 +94,34 @@ pub struct PushParams {
     /// Remote to push to. Defaults to `origin`.
     #[serde(default)]
     pub remote: Option<String>,
+    /// Repository directory to act in. Defaults to the server's working directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct DiffParams {
+    /// What to compare: a commit (`HEAD~3`), a branch (`main`), or a range
+    /// (`main..topic`). Omitted, it compares the working tree with `HEAD`.
+    #[serde(default)]
+    pub rev: Option<String>,
+    /// Compare the index with `HEAD` instead of the working tree — what a commit would
+    /// contain right now. Cannot be combined with `rev`.
+    #[serde(default)]
+    pub staged: bool,
+    /// Limit the diff to these paths, relative to the repository.
+    #[serde(default)]
+    pub files: Vec<String>,
+    /// Include the hunks. Off by default, because the per-file summary answers most
+    /// questions for a fraction of the output.
+    #[serde(default)]
+    pub patch: bool,
+    /// Context lines either side of each hunk. Defaults to git's 3.
+    #[serde(default)]
+    pub context: Option<usize>,
+    /// Ceiling on patch lines (default 400). What is cut is reported, not dropped.
+    #[serde(default)]
+    pub max_lines: Option<usize>,
     /// Repository directory to act in. Defaults to the server's working directory.
     #[serde(default)]
     pub cwd: Option<String>,
@@ -323,6 +354,70 @@ impl GitOpsServer {
                 if !outcome.output.is_empty() {
                     text.push_str(&outcome.output);
                     text.push('\n');
+                }
+                Ok(with_structured(text, &outcome))
+            }
+            Err(err) => Ok(failed(err)),
+        }
+    }
+
+    #[tool(
+        name = "diff",
+        description = "Summarise what changed: one line per file with its status and its added/removed counts, then the totals. Reads only — nothing here stages, resets or checks anything out. Without `rev` it is the working tree against `HEAD`; `staged: true` is what a commit would contain; `rev` takes a commit, a branch or a range. `patch: true` adds the hunks, capped at `max_lines` and reporting what it cut. Prefer this over `git diff`, which answers the same question with thousands of lines nobody budgeted for."
+    )]
+    fn diff(
+        &self,
+        Parameters(params): Parameters<DiffParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = DiffRequest {
+            rev: params.rev,
+            staged: params.staged,
+            files: params.files,
+            patch: params.patch,
+            context: params.context,
+            max_lines: params.max_lines,
+            cwd: params.cwd.map(PathBuf::from),
+        };
+
+        match gitops_git::diff::diff(&self.runner, &request) {
+            Ok(outcome) => {
+                let scope = match (&outcome.rev, outcome.staged) {
+                    (Some(rev), _) => format!("`{rev}`"),
+                    (None, true) => "the index against `HEAD`".to_owned(),
+                    (None, false) => "the working tree against `HEAD`".to_owned(),
+                };
+                let mut text = if outcome.unchanged {
+                    format!("No changes in {scope}.\n")
+                } else {
+                    format!(
+                        "{} file(s) changed in {scope}, +{} -{}\n",
+                        outcome.files.len(),
+                        outcome.added,
+                        outcome.removed
+                    )
+                };
+                for file in &outcome.files {
+                    text.push_str(&format!("  {} {}", file.status, file.path));
+                    if let Some(from) = &file.from {
+                        text.push_str(&format!(" (from {from})"));
+                    }
+                    match (file.added, file.removed) {
+                        (Some(added), Some(removed)) => {
+                            text.push_str(&format!(" +{added} -{removed}\n"))
+                        }
+                        _ => text.push_str(" binary\n"),
+                    }
+                }
+                if let Some(patch) = &outcome.patch {
+                    text.push('\n');
+                    text.push_str(patch);
+                    text.push('\n');
+                }
+                if let Some(cut) = &outcome.truncated {
+                    text.push_str(&format!(
+                        "[{} lines shown, {} cut: {}]\n",
+                        cut.shown, cut.cut, cut.hint
+                    ));
                 }
                 Ok(with_structured(text, &outcome))
             }

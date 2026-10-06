@@ -44,6 +44,7 @@ git config?" stops being a question anyone has to answer.
 | `restore` | Throws away local changes to named paths — the safe form of `git checkout -- <path>`. Saves what it discards as a recovery patch first. |
 | `merge_ff_only` | Fast-forwards the current branch onto a ref. Refuses on a dirty tree or diverged history instead of improvising a resolution. |
 | `push` | Publishes the current branch, and only if every commit it would publish is signed. |
+| `diff` | Summarises what changed — a line per file with its status and counts — and returns the hunks only when `patch` is set, under a line cap. Read-only. |
 
 The rules it enforces:
 
@@ -65,6 +66,8 @@ The rules it enforces:
   divergence, never as a merge commit, a rebase or a reset.
 * `push` refuses to publish an unsigned commit whoever made it, pushes only the branch
   you are on, and never rewrites or removes anything already on the remote.
+* `diff` changes nothing, and answers "what did I change" with a summary rather than a
+  patch: the hunks are opt-in and capped, and what the cap cut is always reported.
 
 [Safe git operations](docs/guides/safe-git-operations.md) covers the last three in full.
 
@@ -189,8 +192,8 @@ this server exists to prevent, so do not work around this.
 
 * [Git signing governance](docs/guides/git-signing-governance.md) — every rule, what it
   will and will not touch, and troubleshooting.
-* [Safe git operations](docs/guides/safe-git-operations.md) — `restore`, `merge_ff_only`
-  and `push`: what each refuses, and how to recover a discarded change.
+* [Safe git operations](docs/guides/safe-git-operations.md) — `restore`, `merge_ff_only`,
+  `push` and `diff`: what each refuses, and how to recover a discarded change.
 * [Using it with Claude Code](docs/guides/claude-code.md) — installation and the
   `CLAUDE.md` rules that make the agent reach for it.
 * [CONTRIBUTING.md](CONTRIBUTING.md) — architecture and development.
