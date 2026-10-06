@@ -1169,7 +1169,7 @@ dependencies = [
 [[package]]
 name = "workspaceops"
 version = "0.1.0"
-source = "git+file:///home/mbruno/development/workspaceops?rev=16e5e08ed7a79ad3dcff78631432bd456a2ec61f#16e5e08ed7a79ad3dcff78631432bd456a2ec61f"
+source = "git+https://github.com/mbround18/workspaceops-mcp.git?rev=16e5e08ed7a79ad3dcff78631432bd456a2ec61f#16e5e08ed7a79ad3dcff78631432bd456a2ec61f"
 dependencies = [
  "anyhow",
  "clap",
