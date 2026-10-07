@@ -45,7 +45,7 @@ pub struct CommitSignature {
 impl CommitSignature {
     /// Only a verifiable signature counts. `U` is a good signature from a key this
     /// machine does not trust, which is a trust-store gap rather than an unsigned commit.
-    fn signed(&self) -> bool {
+    pub(crate) fn signed(&self) -> bool {
         matches!(self.verdict.as_str(), "G" | "U")
     }
 }
@@ -205,7 +205,7 @@ fn check_remote(remote: &str) -> Result<()> {
     Ok(())
 }
 
-fn parse_log(stdout: &str) -> Vec<CommitSignature> {
+pub(crate) fn parse_log(stdout: &str) -> Vec<CommitSignature> {
     stdout
         .lines()
         .filter(|line| !line.trim().is_empty())

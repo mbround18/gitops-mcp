@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 
 use gitops_git::{
-    CleanupMode, CommitRequest, DiffRequest, MergeRequest, PushRequest, RestoreRequest,
-    SigningStatus, SystemRunner, WorkspaceApplyRequest, WorkspaceCleanupRequest,
+    CherryPickRequest, CleanupMode, CommitRequest, DiffRequest, MergeRequest, PushRequest,
+    RestoreRequest, SigningStatus, SystemRunner, WorkspaceApplyRequest, WorkspaceCleanupRequest,
     WorkspaceDiffExportRequest, WorkspaceScanRequest, WorkspaceValidateRequest, reconcile,
     workspace_apply, workspace_cleanup, workspace_diff_export, workspace_scan, workspace_validate,
 };
@@ -29,6 +29,8 @@ config first. It never falls back to an unsigned commit.
 recovered. Use it instead of `git checkout -- <path>`.
 - `merge_ff_only` fast-forwards the current branch onto a ref, and refuses if the branches \
 have diverged.
+- `cherry_pick` replays named commits onto the current branch as signed commits that record \
+their origin. A pick that conflicts is aborted and reported, never resolved.
 - `push` publishes the current branch. It refuses to publish an unsigned commit.
 - `diff` summarises what changed — a line per file with its status and counts — and \
 returns the hunks only when `patch` is set, under a line cap. Prefer it over `git diff`, \
@@ -91,6 +93,18 @@ pub struct RestoreParams {
 pub struct MergeParams {
     /// Branch, tag or commit to fast-forward the current branch to.
     pub r#ref: String,
+    /// Repository directory to act in. Defaults to the server's working directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+/// Only the commits: no strategy, no mainline, no skip. Each of those decides how a pick
+/// that does not apply cleanly should land, which is the author's call.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct CherryPickParams {
+    /// Commits to pick, oldest first. Each must name a single non-merge commit; ranges
+    /// are refused.
+    pub commits: Vec<String>,
     /// Repository directory to act in. Defaults to the server's working directory.
     #[serde(default)]
     pub cwd: Option<String>,
@@ -388,6 +402,49 @@ impl GitOpsServer {
                 if !outcome.output.is_empty() {
                     text.push_str(&outcome.output);
                     text.push('\n');
+                }
+                Ok(with_structured(text, &outcome))
+            }
+            Err(err) => Ok(failed(err)),
+        }
+    }
+
+    #[tool(
+        name = "cherry_pick",
+        description = "Replay specific commits onto the current branch, oldest first, as signed commits (`git cherry-pick -x -S`). Signing config is reconciled first; each new commit keeps the original author and records the commit it came from. Refuses on a dirty work tree, an unfinished merge/rebase/cherry-pick, an unknown commit, a range, or a merge commit. If any pick conflicts or fails, the whole cherry-pick is aborted and the branch is left exactly where it was."
+    )]
+    fn cherry_pick(
+        &self,
+        Parameters(params): Parameters<CherryPickParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = CherryPickRequest {
+            commits: params.commits,
+            cwd: params.cwd.map(PathBuf::from),
+        };
+
+        match gitops_git::cherry_pick::cherry_pick(&self.runner, &request) {
+            Ok(outcome) => {
+                let branch = outcome.branch.as_deref().unwrap_or("HEAD");
+                let mut text = format!(
+                    "Picked {} commit(s) onto `{branch}`.\n{} → {}\n",
+                    outcome.picked.len(),
+                    short(Some(&outcome.before)),
+                    short(outcome.after.as_deref()),
+                );
+                for commit in &outcome.picked {
+                    text.push_str(&format!(
+                        "- {} {} ({}) {}\n",
+                        short(Some(&commit.commit)),
+                        commit.verdict,
+                        describe_signature(&commit.verdict),
+                        commit.subject
+                    ));
+                }
+                if outcome.governance.changed() {
+                    text.push_str("Config corrected before picking:\n");
+                    for c in outcome.governance.corrections.iter().filter(|c| c.applied) {
+                        text.push_str(&format!("- `{}` — {}\n", c.command, c.reason));
+                    }
                 }
                 Ok(with_structured(text, &outcome))
             }

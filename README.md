@@ -43,6 +43,7 @@ git config?" stops being a question anyone has to answer.
 | `commit` | Stages `files` (or everything with `all: true`), reconciles config, and creates a **signed** commit. Never falls back to an unsigned commit. |
 | `restore` | Throws away local changes to named paths — the safe form of `git checkout -- <path>`. Saves what it discards as a recovery patch first. |
 | `merge_ff_only` | Fast-forwards the current branch onto a ref. Refuses on a dirty tree or diverged history instead of improvising a resolution. |
+| `cherry_pick` | Replays named commits onto the current branch as **signed** commits that keep the original author and record their source. A conflicting pick is aborted, never resolved. |
 | `push` | Publishes the current branch, and only if every commit it would publish is signed. |
 | `diff` | Summarises what changed — a line per file with its status and counts — and returns the hunks only when `patch` is set, under a line cap. Read-only. |
 | `workspace_scan` | Enumerates sibling workspaces (`<prefix>-*`) and reports branch, divergence, and dirty state in one call. |
@@ -69,12 +70,14 @@ The rules it enforces:
   to a patch under `.git/` first, and if that patch cannot be written, nothing is restored.
 * `merge_ff_only` only fast-forwards. Diverged branches come back as a refusal naming the
   divergence, never as a merge commit, a rebase or a reset.
+* `cherry_pick` signs every commit it creates and refuses merge commits and ranges. If
+  any pick conflicts, the whole cherry-pick is aborted and the branch is left where it was.
 * `push` refuses to publish an unsigned commit whoever made it, pushes only the branch
   you are on, and never rewrites or removes anything already on the remote.
 * `diff` changes nothing, and answers "what did I change" with a summary rather than a
   patch: the hunks are opt-in and capped, and what the cap cut is always reported.
 
-[Safe git operations](docs/guides/safe-git-operations.md) covers the last three in full.
+[Safe git operations](docs/guides/safe-git-operations.md) covers the last four in full.
 
 ## Getting started
 
@@ -175,11 +178,12 @@ un-execute it, do not repoint `core.hooksPath`, and do not turn off commit signi
 hook failure is the real problem and it is unrelated to signing.
 ```
 
-### The other three operations
+### The other operations
 
 ```jsonc
 { "files": ["apps/web/e2e/canvas-touch.spec.ts"] }  // restore
 { "ref": "069-a-board-you-can-touch" }              // merge_ff_only
+{ "commits": ["fork/fix-parser"] }                  // cherry_pick
 { "remote": "origin" }                              // push
 ```
 
@@ -198,7 +202,7 @@ this server exists to prevent, so do not work around this.
 * [Git signing governance](docs/guides/git-signing-governance.md) — every rule, what it
   will and will not touch, and troubleshooting.
 * [Safe git operations](docs/guides/safe-git-operations.md) — `restore`, `merge_ff_only`,
-  `push` and `diff`: what each refuses, and how to recover a discarded change.
+  `cherry_pick`, `push` and `diff`: what each refuses, and how to recover a discarded change.
 * [Using it with Claude Code](docs/guides/claude-code.md) — installation and the
   `CLAUDE.md` rules that make the agent reach for it.
 * [CONTRIBUTING.md](CONTRIBUTING.md) — architecture and development.

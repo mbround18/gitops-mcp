@@ -1,4 +1,4 @@
-//! End-to-end: the restore, merge and push tools driven over real stdio JSON-RPC against
+//! End-to-end: the restore, merge, cherry-pick and push tools driven over real stdio JSON-RPC against
 //! a real repository, a real signing key and a real (local, bare) remote.
 //!
 //! These prove the safeguards hold against git itself rather than against a script.
@@ -221,6 +221,110 @@ fn an_unknown_ref_is_refused() {
     );
     assert!(result.is_error(), "{}", result.text());
     assert!(result.text().contains("not a ref"), "{}", result.text());
+}
+
+// ---------------------------------------------------------------- cherry_pick
+
+#[test]
+fn a_contributors_commit_is_picked_signed_and_attributed() {
+    let sandbox = Sandbox::new();
+    let mut server = sandbox.server();
+    commit_all(&mut server, &sandbox.repo, "chore: seed");
+
+    sandbox.git(&["checkout", "-q", "-b", "fork"]);
+    sandbox.write("contributed.txt", "from a fork\n");
+    sandbox.git(&["add", "contributed.txt"]);
+    sandbox.git(&[
+        "commit",
+        "-q",
+        "--no-gpg-sign",
+        "--author=Contributor <contributor@example.com>",
+        "-m",
+        "feat: contributed",
+    ]);
+    let source = sandbox.git(&["rev-parse", "HEAD"]);
+    sandbox.git(&["checkout", "-q", "main"]);
+
+    let result = server.call(
+        "cherry_pick",
+        json!({"commits": ["fork"], "cwd": sandbox.repo.to_str().unwrap()}),
+    );
+    assert!(!result.is_error(), "{}", result.text());
+
+    // An unsigned source still lands as a signed commit, under the original author, and
+    // says where it came from.
+    assert_eq!(sandbox.git(&["log", "-1", "--format=%G?"]), "G");
+    assert_eq!(
+        sandbox.git(&["log", "-1", "--format=%an <%ae>"]),
+        "Contributor <contributor@example.com>"
+    );
+    assert_eq!(sandbox.git(&["log", "-1", "--format=%ce"]), EMAIL);
+    let message = sandbox.git(&["log", "-1", "--format=%B"]);
+    assert!(
+        message.contains(&format!("(cherry picked from commit {source})")),
+        "{message}"
+    );
+    assert_eq!(sandbox.git(&["rev-list", "--count", "HEAD"]), "2");
+    assert_eq!(result.structured()["picked"][0]["verdict"], "G");
+}
+
+#[test]
+fn a_conflicting_pick_is_aborted_and_the_branch_left_alone() {
+    let sandbox = Sandbox::new();
+    let mut server = sandbox.server();
+    commit_all(&mut server, &sandbox.repo, "chore: seed");
+
+    sandbox.git(&["checkout", "-q", "-b", "fork"]);
+    sandbox.write("shared.txt", "their line\n");
+    commit_all(&mut server, &sandbox.repo, "feat: theirs applies");
+    sandbox.write("README.md", "# sandbox\ntheir edit\n");
+    commit_all(&mut server, &sandbox.repo, "feat: theirs conflicts");
+
+    sandbox.git(&["checkout", "-q", "main"]);
+    sandbox.write("README.md", "# sandbox\nour edit\n");
+    commit_all(&mut server, &sandbox.repo, "feat: ours");
+    let before = sandbox.git(&["rev-parse", "HEAD"]);
+
+    // The first pick applies; the second conflicts, and takes the first back out with it.
+    let result = server.call(
+        "cherry_pick",
+        json!({"commits": ["fork~1", "fork"], "cwd": sandbox.repo.to_str().unwrap()}),
+    );
+    assert!(result.is_error(), "{}", result.text());
+    let text = result.text();
+    assert!(text.contains("README.md"), "{text}");
+    assert!(text.contains("back where it started"), "{text}");
+
+    assert_eq!(sandbox.git(&["rev-parse", "HEAD"]), before);
+    assert_eq!(sandbox.git(&["status", "--porcelain"]), "");
+    assert!(!sandbox.repo.join(".git/CHERRY_PICK_HEAD").exists());
+    assert!(!sandbox.repo.join(".git/sequencer").exists());
+}
+
+#[test]
+fn a_merge_commit_is_not_picked() {
+    let sandbox = Sandbox::new();
+    let mut server = sandbox.server();
+    commit_all(&mut server, &sandbox.repo, "chore: seed");
+
+    sandbox.git(&["checkout", "-q", "-b", "fork"]);
+    sandbox.write("feature.txt", "work\n");
+    commit_all(&mut server, &sandbox.repo, "feat: work");
+    sandbox.git(&["checkout", "-q", "main"]);
+    sandbox.write("other.txt", "divergence\n");
+    commit_all(&mut server, &sandbox.repo, "chore: diverge");
+    sandbox.git(&["checkout", "-q", "-b", "merged"]);
+    sandbox.git(&["merge", "-q", "--no-edit", "fork"]);
+    sandbox.git(&["checkout", "-q", "main"]);
+    let before = sandbox.git(&["rev-parse", "HEAD"]);
+
+    let result = server.call(
+        "cherry_pick",
+        json!({"commits": ["merged"], "cwd": sandbox.repo.to_str().unwrap()}),
+    );
+    assert!(result.is_error(), "{}", result.text());
+    assert!(result.text().contains("merge commit"), "{}", result.text());
+    assert_eq!(sandbox.git(&["rev-parse", "HEAD"]), before);
 }
 
 // ---------------------------------------------------------------- push

@@ -21,7 +21,7 @@ pay for both:
    type by hand — the one place where none of the checks apply.
 
 Installing the server fixes the first problem — `commit` can't produce an unsigned commit
-and reconciles config to your key first. The `restore`, `merge_ff_only` and `push` tools fix
+and reconciles config to your key first. The `restore`, `merge_ff_only`, `cherry_pick` and `push` tools fix
 the third, by making the safe form of each operation the one the agent can reach. Adding
 the `CLAUDE.md` rules below fixes the second, by removing the agent's reason to touch
 `git config` at all.
@@ -64,7 +64,8 @@ claude mcp list
 
 The tools appear as `mcp__gitops__git_signing_status`,
 `mcp__gitops__git_signing_enforce`, `mcp__gitops__commit`, `mcp__gitops__restore`,
-`mcp__gitops__merge_ff_only`, `mcp__gitops__push` and `mcp__gitops__diff`. The last four
+`mcp__gitops__merge_ff_only`, `mcp__gitops__cherry_pick`, `mcp__gitops__push` and
+`mcp__gitops__diff`. The last five
 are covered in [Safe git operations](safe-git-operations.md).
 
 > A session that was already running when you registered the server will not see it. Tool
@@ -97,9 +98,10 @@ to `~/.claude/CLAUDE.md` so it prefers the tools. Under your git practices:
     problem and is unrelated to signing. Never use `--no-verify`, never delete a hook,
     never `chmod -x` one, and never repoint `core.hooksPath`. If the hook's complaint
     cannot be fixed, report it and stop.
-- **Restore, merge and push through the `gitops` MCP server too.** Use
+- **Restore, merge, cherry-pick and push through the `gitops` MCP server too.** Use
   `mcp__gitops__restore` (`{files: [...]}`) instead of `git checkout -- <path>` or
-  `git restore`, `mcp__gitops__merge_ff_only` (`{ref}`) instead of `git merge`, and
+  `git restore`, `mcp__gitops__merge_ff_only` (`{ref}`) instead of `git merge`,
+  `mcp__gitops__cherry_pick` (`{commits: [...]}`) instead of `git cherry-pick`, and
   `mcp__gitops__push` (`{}`, or `{remote}`) instead of `git push`. Read a diff with
   `mcp__gitops__diff` (`{}`, or `{patch: true}` for the hunks) instead of `git diff`.
   - These tools do only the safe form of each operation. **When one refuses, the refusal is
@@ -149,8 +151,9 @@ If you allowlist the server's read-only tool, status checks stop prompting. In
 fast-forward on a clean tree, so the worst outcome is a branch pointer moving to a commit
 that is already an ancestor-descendant of where it was.
 
-Leave `mcp__gitops__commit`, `mcp__gitops__git_signing_enforce`, `mcp__gitops__push` and
-`mcp__gitops__restore` prompting unless you want commits, config writes, publishing and
+Leave `mcp__gitops__commit`, `mcp__gitops__cherry_pick`,
+`mcp__gitops__git_signing_enforce`, `mcp__gitops__push` and `mcp__gitops__restore`
+prompting unless you want commits, config writes, publishing and
 discarding local edits to happen unattended. `restore` always saves a patch first, so an
 approved one is recoverable — but approving it is still the point at which you decide the
 work is disposable.
