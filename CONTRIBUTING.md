@@ -18,7 +18,8 @@ Ports and adapters, with exactly one port:
          ┌──────────────────────────────────┐
   MCP ──▶│ gitops-git (domain)              │──▶ CommandRunner ──▶ git / gpg / ssh-keygen
  stdio   │  status · governance · commit     │      (port)           (SystemRunner adapter)
-         │  restore · merge · push           │                       (ScriptedRunner in tests)
+         │  restore · merge · cherry-pick    │
+         │  push · diff                      │                       (ScriptedRunner in tests)
          └──────────────────────────────────┘
 ```
 
@@ -36,6 +37,9 @@ Ports and adapters, with exactly one port:
 * `restore.rs` — discard changes to named paths, after writing them to a recovery patch.
 * `merge.rs` — fast-forward only, with the pre-flight checks that make a half-merge
   impossible.
+* `cherry_pick.rs` — reconcile, then `git cherry-pick -x -S` on named non-merge commits.
+  Refuses while another operation is in progress, so any cherry-pick state left after a
+  failure is its own, and aborts that state rather than leaving a half-applied pick.
 * `push.rs` — publish the current branch, gated on every commit being signed.
 * `diff.rs` — summarise a diff, and render the hunks only on request under a line cap. The
   one read-only operation here: it exists because the unbounded `git diff` an agent would
@@ -62,9 +66,9 @@ These are the reason the crate exists. Do not relax them without a very good arg
    nothing about the repository's hooks or config is changed. A hook git will not run
    (missing `core.hooksPath`, no executable bit) is reported as drift and deliberately
    *not* auto-corrected — both have legitimate causes, so the fix is a judgment call.
-6. **A safeguard is never a parameter.** The dangerous variants of `restore`, `merge` and
-   `push` are absent from the request types, not defaulted to off: no force, no
-   `--no-verify`, no "restore everything", no confirmation flag to flip. A caller that
+6. **A safeguard is never a parameter.** The dangerous variants of `restore`, `merge`,
+   `cherry_pick` and `push` are absent from the request types, not defaulted to off: no force, no
+   `--no-verify`, no "restore everything", no conflict strategy or skip, no confirmation flag to flip. A caller that
    cannot name a knob cannot be talked into using it, and a refusal message that names the
    flag it is refusing teaches that the flag exists — so refusals state the rule instead.
    `nothing_this_server_runs_can_overwrite_published_history` asserts the command lines.

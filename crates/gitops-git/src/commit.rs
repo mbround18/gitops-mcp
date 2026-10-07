@@ -167,7 +167,7 @@ fn stage(
     Ok(request.files.clone())
 }
 
-fn looks_like_signing_failure(stderr: &str) -> bool {
+pub(crate) fn looks_like_signing_failure(stderr: &str) -> bool {
     let lower = stderr.to_ascii_lowercase();
     [
         "gpg failed to sign",

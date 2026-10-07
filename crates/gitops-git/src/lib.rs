@@ -12,11 +12,14 @@
 //! for a shell and a dangerous flag to perform. Each does only its safe form —
 //! [`restore::restore`] keeps a recoverable patch, [`merge::merge_ff_only`] only
 //! fast-forwards, [`push::push`] only publishes signed commits on the current branch —
-//! and none of them exposes a parameter that relaxes the rule.
+//! and none of them exposes a parameter that relaxes the rule. [`cherry_pick::cherry_pick`]
+//! joins them: it signs every commit it creates, and a pick that cannot apply cleanly is
+//! aborted rather than resolved.
 //!
 //! [`diff::diff`] is here for the opposite reason: it changes nothing, and exists so that
 //! "what did I change" costs a summary rather than a patch nobody budgeted for.
 
+pub mod cherry_pick;
 pub mod commit;
 pub mod diff;
 pub mod governance;
@@ -28,6 +31,7 @@ pub mod runner;
 pub mod status;
 pub mod workspace;
 
+pub use cherry_pick::{CherryPickOutcome, CherryPickRequest, cherry_pick};
 pub use commit::{CommitOutcome, CommitRequest};
 pub use diff::{ChangedFile, DiffOutcome, DiffRequest, Truncation, diff};
 pub use governance::{Correction, Reconciliation, reconcile};
@@ -117,6 +121,38 @@ pub enum Error {
     },
     #[error("merge failed: {detail}")]
     MergeFailed { detail: String },
+    #[error(
+        "refusing to cherry-pick: a {operation} is already in progress in this repository. \
+         It was not started here, so finishing or abandoning it is the author's call — \
+         report it rather than continuing, skipping or aborting it."
+    )]
+    OperationInProgress { operation: String },
+    #[error(
+        "`{commit}` did not apply cleanly; these paths conflicted:\n{}\n\n{detail}\n\n\
+         The cherry-pick was aborted, so the branch is back where it started and nothing \
+         was committed. Resolving the conflict decides what the code should be — report \
+         it and let the author decide. Do not re-pick it with a strategy that takes one \
+         side, and do not drop the commit to get the rest through.",
+        files.iter().map(|f| format!("  {f}")).collect::<Vec<_>>().join("\n")
+    )]
+    CherryPickConflict {
+        commit: String,
+        files: Vec<String>,
+        detail: String,
+    },
+    #[error(
+        "cherry-pick failed: {detail}\n\n\
+         The cherry-pick was aborted, so the branch is back where it started and nothing \
+         was committed."
+    )]
+    CherryPickFailed { detail: String },
+    #[error(
+        "cherry-pick failed and could not be cleanly aborted: {detail}\n\n\
+         The repository may still be mid-cherry-pick; the branch was at `{before}` before \
+         it started. Report this and let the author recover it — do not reset or force \
+         anything."
+    )]
+    CherryPickStuck { detail: String, before: String },
     #[error("HEAD is detached, so there is no branch to push; check out a branch first")]
     DetachedHead,
     #[error("`{remote}` is not a configured remote")]

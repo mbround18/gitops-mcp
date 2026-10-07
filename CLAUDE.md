@@ -12,6 +12,7 @@ This repo registers itself as a project-scope MCP server (`.mcp.json`), so after
   instead of `git commit`.
 * `mcp__gitops__restore` — `{files: [...]}` instead of `git checkout -- <path>`.
 * `mcp__gitops__merge_ff_only` — `{ref}` instead of `git merge`.
+* `mcp__gitops__cherry_pick` — `{commits: [...]}` instead of `git cherry-pick`.
 * `mcp__gitops__push` — `{}` instead of `git push`.
 * `mcp__gitops__diff` — `{}`, or `{patch: true}` for the hunks, instead of `git diff`.
 * `mcp__gitops__git_signing_status` — before touching anything signing-related.

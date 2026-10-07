@@ -41,7 +41,7 @@ pub fn merge_ff_only(runner: &dyn CommandRunner, request: &MergeRequest) -> Resu
     let cwd = request.cwd.as_deref();
     let target = request.r#ref.trim();
 
-    check_ref(target)?;
+    check_ref(target, "merge")?;
 
     let status = SigningStatus::read(runner, cwd)?;
     status.require_repository()?;
@@ -111,7 +111,9 @@ pub fn merge_ff_only(runner: &dyn CommandRunner, request: &MergeRequest) -> Resu
     })
 }
 
-fn check_ref(target: &str) -> Result<()> {
+/// Refuse anything that is not plainly a single ref: an option, a range, or several
+/// words would each make git do something other than what `action` names.
+pub(crate) fn check_ref(target: &str, action: &str) -> Result<()> {
     let reject = |why: &str| {
         Err(Error::InvalidRequest(format!(
             "`{target}` is not a usable ref: {why}"
@@ -127,7 +129,7 @@ fn check_ref(target: &str) -> Result<()> {
         return reject("it contains whitespace");
     }
     if target.contains("..") {
-        return reject("a range is not a merge source");
+        return reject(&format!("a range is not a {action} source"));
     }
     Ok(())
 }
