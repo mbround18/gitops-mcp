@@ -20,8 +20,11 @@ const INSTRUCTIONS: &str = "\
 Git signing governance. The signing key is the source of truth for committer identity.
 
 - `git_signing_status` reports `git config commit.gpgsign` and `git config user.signingkey` \
-verbatim, plus every scope and any drift. Call it before touching git config.
-- `git_signing_enforce` rewrites global git config to match the signing key. Never edit \
+verbatim, plus every scope and any drift. It supports both OpenPGP and SSH signing, and \
+reports SSH allowed-signers drift too. Call it before touching git config.
+- `git_signing_enforce` reconciles git config with the effective signing key for this \
+repository. It preserves intentional repo-local signing overrides and auto-manages SSH \
+allowed signers when needed. Never edit \
 `user.email`, `user.name`, `user.signingkey` or `commit.gpgsign` yourself — call this instead.
 - `commit` stages files (or everything with `all`) and creates a signed commit, enforcing \
 config first. It never falls back to an unsigned commit.
@@ -256,7 +259,7 @@ impl GitOpsServer {
 
     #[tool(
         name = "git_signing_enforce",
-        description = "Reconcile global git config with the signing key's own identity: re-enable `commit.gpgsign`, restore `user.email`/`user.name` to the key's uid, and drop local overrides that shadow them. Use this instead of editing git config directly."
+        description = "Reconcile git signing config with the effective signing key for this repository: keep `commit.gpgsign` on, repair `user.email`, preserve intentional repo-local signer overrides, and auto-manage SSH allowed signers when needed. Use this instead of editing git config directly."
     )]
     fn git_signing_enforce(
         &self,
@@ -775,6 +778,16 @@ fn summarize(status: &SigningStatus) -> String {
             identity.name.as_deref().unwrap_or("(no name)"),
             identity.email.as_deref().unwrap_or("(no email)"),
         ));
+        if identity.format == "ssh" {
+            out.push_str(&format!(
+                "SSH allowed signers: {}\n",
+                status
+                    .ssh_allowed_signers_file
+                    .effective
+                    .as_deref()
+                    .unwrap_or("(unset)")
+            ));
+        }
     }
     out.push_str(&format!(
         "pre-commit hook: {}\n",

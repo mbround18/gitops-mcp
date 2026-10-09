@@ -39,7 +39,7 @@ git config?" stops being a question anyone has to answer.
 | Tool | Behavior |
 | --- | --- |
 | `git_signing_status` | Reports `git config commit.gpgsign` and `git config user.signingkey` verbatim, every time, plus the value at each scope, the signing key's own identity, and any drift. |
-| `git_signing_enforce` | Rewrites global git config to match the signing key. `dry_run: true` shows the plan without writing. |
+| `git_signing_enforce` | Reconciles git signing config with the effective signing key for the current repo. Preserves intentional repo-local signer overrides and auto-manages SSH allowed signers. `dry_run: true` shows the plan without writing. |
 | `commit` | Stages `files` (or everything with `all: true`), reconciles config, and creates a **signed** commit. Never falls back to an unsigned commit. |
 | `restore` | Throws away local changes to named paths — the safe form of `git checkout -- <path>`. Saves what it discards as a recovery patch first. |
 | `merge_ff_only` | Fast-forwards the current branch onto a ref. Refuses on a dirty tree or diverged history instead of improvising a resolution. |
@@ -56,6 +56,12 @@ The rules it enforces:
 
 * `commit.gpgsign` stays `true` globally, and a repo that turned it off gets fixed.
 * `user.email` matches the signing key's own email — the key wins, not the config.
+* A repository may intentionally use a different signing backend/key than your global one.
+  Repo-local `gpg.format` / `user.signingkey` overrides are supported; in that case
+  `gitops` repairs the repo-local `user.email` instead of rewriting your global identity.
+* SSH signing gets an allowed-signers file too. If a repo signs with SSH and no
+  `gpg.ssh.allowedSignersFile` is configured, `gitops` creates one under that repo's
+  git dir and points the repo at it.
 * `user.name` is left alone. A display name is a preference; the email is what the
   signature is attributed by.
 * No signing key, or a locked one? The commit **fails** with an actionable error.
@@ -94,6 +100,11 @@ Check where you stand — if `user.signingkey` is empty, set it first
 git config --global user.signingkey   # e.g. 354F34B4DB349BD6, or a path to an SSH key
 git config --global gpg.format        # openpgp (default) or ssh
 ```
+
+If some repositories use a different signer — for example personal repos with GPG and work
+repos with SSH — set that repo's `user.signingkey` / `gpg.format` locally. `gitops` will
+repair the repo-local `user.email` and, for SSH, manage an allowed-signers file for that
+repo automatically.
 
 ### Install
 

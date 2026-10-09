@@ -25,6 +25,14 @@ impl ScopedValue {
             local: read_config(runner, cwd, &["--local"], key)?,
         })
     }
+
+    fn read_path(runner: &dyn CommandRunner, cwd: Option<&Path>, key: &str) -> Result<Self> {
+        Ok(Self {
+            effective: read_path_config(runner, cwd, &[], key)?,
+            global: read_path_config(runner, cwd, &["--global"], key)?,
+            local: read_path_config(runner, cwd, &["--local"], key)?,
+        })
+    }
 }
 
 fn read_config(
@@ -37,6 +45,18 @@ fn read_config(
     args.extend_from_slice(scope);
     args.push(key);
     // Exit code 1 just means "unset", which is a value, not a failure.
+    Ok(runner.run("git", &args, cwd)?.value())
+}
+
+fn read_path_config(
+    runner: &dyn CommandRunner,
+    cwd: Option<&Path>,
+    scope: &[&str],
+    key: &str,
+) -> Result<Option<String>> {
+    let mut args = vec!["config", "--path"];
+    args.extend_from_slice(scope);
+    args.push(key);
     Ok(runner.run("git", &args, cwd)?.value())
 }
 
@@ -72,6 +92,10 @@ pub enum Drift {
     KeyIdentityUnknown { key: String, reason: String },
     /// A local config value shadows the global one for a signing key.
     LocalOverride { key: String, value: String },
+    /// SSH signing is active but no allowed signers file is configured.
+    MissingAllowedSignersFile,
+    /// SSH signing points at an allowed signers file that does not exist.
+    AllowedSignersFileMissing { path: String },
     /// `core.hooksPath` points at a directory that does not exist, so no hook can run.
     HooksDirectoryMissing { path: String },
     /// A `pre-commit` hook exists but is not executable, so git silently skips it.
@@ -96,6 +120,12 @@ impl Drift {
             }
             Self::LocalOverride { key, value } => {
                 format!("local config overrides {key} with `{value}`")
+            }
+            Self::MissingAllowedSignersFile => {
+                "SSH signing has no gpg.ssh.allowedSignersFile configured".into()
+            }
+            Self::AllowedSignersFileMissing { path } => {
+                format!("SSH allowed signers file `{path}` does not exist")
             }
             Self::HooksDirectoryMissing { path } => format!(
                 "core.hooksPath points at `{path}`, which does not exist, so no hook can run"
@@ -144,6 +174,7 @@ pub struct SigningStatus {
     pub commit_gpgsign: ScopedValue,
     pub user_signingkey: ScopedValue,
     pub gpg_format: ScopedValue,
+    pub ssh_allowed_signers_file: ScopedValue,
     pub user_email: ScopedValue,
     pub user_name: ScopedValue,
     pub signing_identity: Option<SigningIdentity>,
@@ -167,6 +198,8 @@ impl SigningStatus {
         let commit_gpgsign = ScopedValue::read(runner, cwd, "commit.gpgsign")?;
         let user_signingkey = ScopedValue::read(runner, cwd, "user.signingkey")?;
         let gpg_format = ScopedValue::read(runner, cwd, "gpg.format")?;
+        let ssh_allowed_signers_file =
+            ScopedValue::read_path(runner, cwd, "gpg.ssh.allowedSignersFile")?;
         let user_email = ScopedValue::read(runner, cwd, "user.email")?;
         let user_name = ScopedValue::read(runner, cwd, "user.name")?;
 
@@ -232,22 +265,31 @@ impl SigningStatus {
             });
         }
 
+        if format == "ssh" {
+            match ssh_allowed_signers_file.effective.as_deref() {
+                None => drift.push(Drift::MissingAllowedSignersFile),
+                Some(path) => {
+                    let info = runner.path_info(Path::new(path));
+                    if !info.exists {
+                        drift.push(Drift::AllowedSignersFileMissing {
+                            path: path.to_owned(),
+                        });
+                    }
+                }
+            }
+        }
+
         let hooks = read_hooks(runner, cwd, repository.is_some(), &mut drift)?;
 
-        // A local override of an identity key is how signing silently breaks per-repo.
-        for (key, scoped) in [
-            ("user.email", &user_email),
-            ("user.signingkey", &user_signingkey),
-            ("gpg.format", &gpg_format),
-        ] {
-            if let Some(local) = &scoped.local
-                && scoped.global.as_deref() != Some(local.as_str())
-            {
-                drift.push(Drift::LocalOverride {
-                    key: key.to_owned(),
-                    value: local.clone(),
-                });
-            }
+        if let Some(local) = &user_email.local
+            && user_email.effective.as_deref()
+                != signing_identity.as_ref().and_then(|id| id.email.as_deref())
+            && user_email.global.as_deref() != Some(local.as_str())
+        {
+            drift.push(Drift::LocalOverride {
+                key: "user.email".into(),
+                value: local.clone(),
+            });
         }
 
         let signing_available = signing_identity
@@ -259,6 +301,7 @@ impl SigningStatus {
             commit_gpgsign,
             user_signingkey,
             gpg_format,
+            ssh_allowed_signers_file,
             user_email,
             user_name,
             signing_identity,
@@ -272,6 +315,11 @@ impl SigningStatus {
 
     pub(crate) fn require_repository(&self) -> Result<&str> {
         self.repository.as_deref().ok_or(Error::NotARepository)
+    }
+
+    pub(crate) fn uses_repo_local_signing(&self) -> bool {
+        self.repository.is_some()
+            && (self.user_signingkey.local.is_some() || self.gpg_format.local.is_some())
     }
 }
 

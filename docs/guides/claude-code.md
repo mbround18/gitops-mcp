@@ -86,7 +86,8 @@ to `~/.claude/CLAUDE.md` so it prefers the tools. Under your git practices:
   - **Never write git config yourself.** Do not run `git config` to set `user.email`,
     `user.name`, `user.signingkey`, `gpg.format`, or `commit.gpgsign`—at any scope, for any
     reason, including to make a failing commit succeed. Repair config with
-    `mcp__gitops__git_signing_enforce`, which corrects it to match the signing key. If
+    `mcp__gitops__git_signing_enforce`, which corrects it to match the effective signing
+    key for that repository, preserving intentional repo-local SSH/GPG overrides. If
     config is wrong in a way that tool does not fix, report it and stop.
   - The signing key is the source of truth for committer identity: `user.email` must match
     the key's uid email. `user.name` is a deliberate preference—leave it alone even when it

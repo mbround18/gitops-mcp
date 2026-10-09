@@ -28,7 +28,8 @@ Ports and adapters, with exactly one port:
   `std::process` or `std::fs` directly, so every behaviour is testable without a
   repository, a keyring, or a writable disk.
 * `status.rs` — reads each signing-related config key at effective/global/local scope and
-  classifies the gap between config and key as `Drift`.
+  classifies the gap between config and key as `Drift`, including SSH allowed-signers
+  state.
 * `identity.rs` — resolves what a signing key says about itself (OpenPGP uid, or the
   comment on an SSH public key). Pure parsers, unit-tested against real command output.
 * `governance.rs` — turns `Drift` into `git config` writes. Dry-run capable.
@@ -58,8 +59,9 @@ These are the reason the crate exists. Do not relax them without a very good arg
 3. **Reconcile before committing.** `commit` always runs governance first, and the test
    `config_is_repaired_before_the_commit_is_made` asserts the ordering.
 4. **`user.name` is not governed.** A display name is a preference; the email is what the
-   signature is checked against. Only `user.email`, `user.signingkey`, `gpg.format` and
-   `commit.gpgsign` are policed.
+   signature is checked against. `commit.gpgsign` and the effective signing identity are
+   policed; intentional repo-local `user.signingkey` / `gpg.format` overrides are allowed
+   so one repo can use OpenPGP while another uses SSH.
 5. **Hook failures are never bypassed.** `--no-verify` is never passed to git, and there
    is no parameter that would add it. A failing `pre-commit` hook comes back as
    `Error::HookRejected` carrying the hook's own output; the commit is not retried and

@@ -2,7 +2,7 @@
 //!
 //! The domain logic in this crate never touches `std::process` or `std::fs` directly; it
 //! talks to [`CommandRunner`], which covers running a process, probing a path, and
-//! writing a file.
+//! reading and writing files.
 //! Tests substitute a scripted runner, so every behaviour below is deterministic without
 //! a real repository, key ring, or filesystem.
 
@@ -56,6 +56,9 @@ pub trait CommandRunner {
     /// Probe a path. A path that cannot be inspected reads as absent.
     fn path_info(&self, path: &Path) -> PathInfo;
 
+    /// Read a UTF-8 file.
+    fn read_file(&self, path: &Path) -> std::io::Result<String>;
+
     /// Write `contents` to `path`, creating parent directories. Used for the safety net
     /// kept before a destructive operation, so a failure here must abort that operation.
     fn write_file(&self, path: &Path, contents: &str) -> std::io::Result<()>;
@@ -100,6 +103,11 @@ impl CommandRunner for SystemRunner {
         }
     }
 
+    fn read_file(&self, path: &Path) -> std::io::Result<String> {
+        tracing::debug!(path = %path.display(), "reading file");
+        std::fs::read_to_string(path)
+    }
+
     fn write_file(&self, path: &Path, contents: &str) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -114,6 +122,7 @@ impl CommandRunner for SystemRunner {
 pub struct ScriptedRunner {
     responses: HashMap<String, CommandOutput>,
     paths: HashMap<PathBuf, PathInfo>,
+    files: HashMap<PathBuf, String>,
     calls: std::cell::RefCell<Vec<String>>,
     writes: std::cell::RefCell<Vec<(PathBuf, String)>>,
     write_fails: bool,
@@ -140,6 +149,12 @@ impl ScriptedRunner {
     pub fn with_path(mut self, path: &str, exists: bool, executable: bool) -> Self {
         self.paths
             .insert(PathBuf::from(path), PathInfo { exists, executable });
+        self
+    }
+
+    /// Seed a readable file. Paths not declared here fail to read.
+    pub fn with_file(mut self, path: &str, contents: &str) -> Self {
+        self.files.insert(PathBuf::from(path), contents.to_owned());
         self
     }
 
@@ -188,6 +203,13 @@ impl CommandRunner for ScriptedRunner {
 
     fn path_info(&self, path: &Path) -> PathInfo {
         self.paths.get(path).copied().unwrap_or_default()
+    }
+
+    fn read_file(&self, path: &Path) -> std::io::Result<String> {
+        self.files
+            .get(path)
+            .cloned()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "scripted file"))
     }
 
     fn write_file(&self, path: &Path, contents: &str) -> std::io::Result<()> {

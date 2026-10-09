@@ -144,3 +144,27 @@ fn a_clean_sandbox_reports_no_drift() {
     assert!(text.contains("Drift: none"), "{text}");
     assert_eq!(result.structured()["signing_available"], json!(true));
 }
+
+#[test]
+fn missing_ssh_allowed_signers_is_recreated_by_signing_enforce() {
+    let sandbox = Sandbox::new();
+    let allowed = sandbox.home_path().join("allowed_signers");
+    std::fs::remove_file(&allowed).unwrap();
+
+    let mut server = sandbox.server();
+    let status = server.call("git_signing_status", json!({"cwd": sandbox.repo}));
+    assert!(
+        status.text().contains("allowed signers file"),
+        "{}",
+        status.text()
+    );
+
+    let result = server.call("git_signing_enforce", json!({"cwd": sandbox.repo}));
+    let text = result.text();
+    assert!(!result.is_error(), "{text}");
+    assert!(allowed.exists(), "allowed signers file was not recreated");
+
+    let contents = std::fs::read_to_string(&allowed).unwrap();
+    assert!(contents.contains(EMAIL), "{contents}");
+    assert!(contents.contains("ssh-ed25519"), "{contents}");
+}

@@ -18,7 +18,7 @@ repository you touch afterwards.
 ## What it checks
 
 `git_signing_status` reports, for `commit.gpgsign`, `user.signingkey`, `gpg.format`,
-`user.email` and `user.name`:
+`gpg.ssh.allowedSignersFile`, `user.email` and `user.name`:
 
 * **effective** — what git actually uses (`git config <key>`)
 * **global** — `git config --global <key>`
@@ -49,7 +49,9 @@ phrased. The full structured report is attached as JSON.
 | `missing_signing_key` | `user.signingkey` is not configured anywhere |
 | `email_mismatch` | `user.email` does not match the signing key's email |
 | `key_identity_unknown` | a key is configured but could not be read |
-| `local_override` | a local value shadows the global one for an identity key |
+| `missing_allowed_signers_file` | SSH signing is active but `gpg.ssh.allowedSignersFile` is unset |
+| `allowed_signers_file_missing` | SSH signing points at an allowed signers file that does not exist |
+| `local_override` | a local `user.email` still shadows the effective signing identity with the wrong email |
 
 ## What it corrects
 
@@ -58,10 +60,16 @@ phrased. The full structured report is attached as JSON.
 1. `git config --global commit.gpgsign true` — when signing is not enabled globally.
 2. `git config --local --unset-all commit.gpgsign` — when a repository turned signing off.
    There is no legitimate reason for a repository to disable signing.
-3. `git config --global user.email <key email>` — when the global email does not match
-   the signing key.
-4. `git config --local --unset-all user.email` — when a local email shadows the key's
-   email, so the corrected global value takes effect.
+3. `git config --global user.email <key email>` — when the repository uses your global
+   signing identity and the global email does not match the signing key.
+4. `git config --local user.email <key email>` — when the repository intentionally uses a
+   repo-local signer (for example global OpenPGP, local SSH) and its effective email must
+   follow that repo-local key instead of your global identity.
+5. `git config --local --unset-all user.email` — when a local email shadows the global
+   signer with the wrong value.
+6. For SSH signing, create or update an allowed signers file containing the current
+   signing principal and public key. If none is configured, `gitops` creates one under the
+   repository's git dir and points `gpg.ssh.allowedSignersFile` at it locally.
 
 Pass `dry_run: true` to see the plan without writing anything.
 
@@ -69,8 +77,10 @@ Pass `dry_run: true` to see the plan without writing anything.
 
 * **`user.name`** — a display name is a preference. `MBRound18` and
   `Michael Bruno` are both fine; the signature is checked against the email.
-* **A local `user.email` that matches the key.** Only shadowing values are removed.
-* **`gpg.format`** — switching signing formats is a decision, not a repair.
+* **A local `user.email` that already matches the effective key.**
+* **Intentional repo-local `user.signingkey` / `gpg.format` overrides.** That is how you
+  can use GPG in one repo and SSH in another without rewriting global config every time.
+* **`gpg.format` itself** — switching signing formats is a decision, not a repair.
 * **Your keys.** `gitops` never creates, imports, or unlocks a key.
 
 ## Committing
@@ -86,6 +96,10 @@ implicit "commit whatever happens to be staged".
 The sequence is always: enforce config → stage → verify something is staged → `git commit
 -S` → report the commit id and git's own signature verdict (`%G?`, where `G` is a good
 signature).
+
+That flow is the same for OpenPGP and SSH. `gitops` does not choose between separate
+commit paths; it always runs `git commit -S`, and git signs with whatever the effective
+`gpg.format` / `user.signingkey` is for that repository.
 
 ### When signing is not available
 
@@ -178,7 +192,8 @@ keyring, or the path in `user.signingkey` does not exist. Check
 
 **An SSH key reports no email** — SSH keys carry only a free-form comment. Give the public
 key a comment that is your email address (`ssh-keygen -C you@example.com`) and the email
-check starts working; until then, only the `commit.gpgsign` rules apply.
+check starts working; until then, `gitops` cannot reconcile `user.email` or build an
+allowed signers entry for that key automatically.
 
 **A hook keeps rejecting the commit** — read what the hook printed; it is included in the
 error. Fix that. If the hook itself is broken, fix or remove the hook deliberately — do

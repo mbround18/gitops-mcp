@@ -188,6 +188,12 @@ pub enum Error {
     DiffFailed { detail: String },
     #[error("workspace operation failed: {detail}")]
     WorkspaceOperationFailed { detail: String },
+    #[error("could not write `{path}`: {source}")]
+    FileWriteFailed {
+        path: String,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 impl From<std::io::Error> for Error {
