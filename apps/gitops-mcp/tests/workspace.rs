@@ -37,7 +37,7 @@ fn workspace_scan_reports_sibling_divergence_and_dirty_state() {
         first["workspace"].as_str().unwrap(),
         "ThunderForgeVTT-levels"
     );
-    assert_eq!(first["dirty"].as_bool().unwrap(), false);
+    assert!(!first["dirty"].as_bool().unwrap());
     assert_eq!(first["tracked_changes"].as_u64().unwrap(), 0);
     assert_eq!(first["untracked_changes"].as_u64().unwrap(), 0);
     assert_eq!(first["ahead"].as_u64().unwrap(), 1);

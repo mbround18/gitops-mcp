@@ -45,6 +45,8 @@ git config?" stops being a question anyone has to answer.
 | `merge_ff_only` | Fast-forwards the current branch onto a ref. Refuses on a dirty tree or diverged history instead of improvising a resolution. |
 | `cherry_pick` | Replays named commits onto the current branch as **signed** commits that keep the original author and record their source. A conflicting pick is aborted, never resolved. |
 | `push` | Publishes the current branch, and only if every commit it would publish is signed. |
+| `tag` | Creates a **signed**, annotated tag under a new name and verifies it. An existing tag is never replaced. |
+| `push_tag` | Publishes one tag, only if it verifies and every commit it carries is signed. Never overwrites a tag the remote already has. |
 | `diff` | Summarises what changed — a line per file with its status and counts — and returns the hunks only when `patch` is set, under a line cap. Read-only. |
 | `workspace_scan` | Enumerates sibling workspaces (`<prefix>-*`) and reports branch, divergence, and dirty state in one call. |
 | `workspace_diff_export` | Exports tracked changes from a sibling workspace into a patch file and reports untracked files excluded from that patch. |
@@ -80,6 +82,9 @@ The rules it enforces:
   any pick conflicts, the whole cherry-pick is aborted and the branch is left where it was.
 * `push` refuses to publish an unsigned commit whoever made it, pushes only the branch
   you are on, and never rewrites or removes anything already on the remote.
+* `tag` only makes signed, annotated tags, and refuses a name that exists. `push_tag`
+  refuses a lightweight or unverifiable tag, unsigned history riding along with it, and
+  a different tag of the same name already on the remote.
 * `diff` changes nothing, and answers "what did I change" with a summary rather than a
   patch: the hunks are opt-in and capped, and what the cap cut is always reported.
 
@@ -196,6 +201,8 @@ hook failure is the real problem and it is unrelated to signing.
 { "ref": "069-a-board-you-can-touch" }              // merge_ff_only
 { "commits": ["fork/fix-parser"] }                  // cherry_pick
 { "remote": "origin" }                              // push
+{ "name": "v1.2.0", "message": "1.2.0" }           // tag
+{ "name": "v1.2.0" }                               // push_tag
 ```
 
 Each one refuses rather than improvising, and the refusal says what to do instead:
@@ -213,7 +220,7 @@ this server exists to prevent, so do not work around this.
 * [Git signing governance](docs/guides/git-signing-governance.md) — every rule, what it
   will and will not touch, and troubleshooting.
 * [Safe git operations](docs/guides/safe-git-operations.md) — `restore`, `merge_ff_only`,
-  `cherry_pick`, `push` and `diff`: what each refuses, and how to recover a discarded change.
+  `cherry_pick`, `push`, `tag`, `push_tag` and `diff`: what each refuses, and how to recover a discarded change.
 * [Using it with Claude Code](docs/guides/claude-code.md) — installation and the
   `CLAUDE.md` rules that make the agent reach for it.
 * [CONTRIBUTING.md](CONTRIBUTING.md) — architecture and development.

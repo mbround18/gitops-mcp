@@ -4,9 +4,10 @@ use std::path::PathBuf;
 
 use gitops_git::{
     CherryPickRequest, CleanupMode, CommitRequest, DiffRequest, MergeRequest, PushRequest,
-    RestoreRequest, SigningStatus, SystemRunner, WorkspaceApplyRequest, WorkspaceCleanupRequest,
-    WorkspaceDiffExportRequest, WorkspaceScanRequest, WorkspaceValidateRequest, reconcile,
-    workspace_apply, workspace_cleanup, workspace_diff_export, workspace_scan, workspace_validate,
+    PushTagRequest, RestoreRequest, SigningStatus, SystemRunner, TagRequest, WorkspaceApplyRequest,
+    WorkspaceCleanupRequest, WorkspaceDiffExportRequest, WorkspaceScanRequest,
+    WorkspaceValidateRequest, reconcile, workspace_apply, workspace_cleanup, workspace_diff_export,
+    workspace_scan, workspace_validate,
 };
 use rmcp::{
     ErrorData, ServerHandler,
@@ -35,6 +36,9 @@ have diverged.
 - `cherry_pick` replays named commits onto the current branch as signed commits that record \
 their origin. A pick that conflicts is aborted and reported, never resolved.
 - `push` publishes the current branch. It refuses to publish an unsigned commit.
+- `tag` creates a signed, annotated tag. It never replaces an existing tag.
+- `push_tag` publishes one tag, only if it is signed and verifies, and never overwrites a \
+tag the remote already has.
 - `diff` summarises what changed — a line per file with its status and counts — and \
 returns the hunks only when `patch` is set, under a line cap. Prefer it over `git diff`, \
 whose full output is rarely what the question needed.
@@ -108,6 +112,34 @@ pub struct CherryPickParams {
     /// Commits to pick, oldest first. Each must name a single non-merge commit; ranges
     /// are refused.
     pub commits: Vec<String>,
+    /// Repository directory to act in. Defaults to the server's working directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+/// Only a name, a message and a target: no force, no lightweight tag, no skipping the
+/// signature. A tag that already exists is refused, never replaced.
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct TagParams {
+    /// Tag name, e.g. `v1.2.0`. Must not exist yet.
+    pub name: String,
+    /// Annotation message; part of what is signed.
+    pub message: String,
+    /// Commit to tag. Defaults to `HEAD`.
+    #[serde(default)]
+    pub target: Option<String>,
+    /// Repository directory to act in. Defaults to the server's working directory.
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize, schemars::JsonSchema)]
+pub struct PushTagParams {
+    /// Name of the local tag to publish.
+    pub name: String,
+    /// Remote to push to. Defaults to `origin`.
+    #[serde(default)]
+    pub remote: Option<String>,
     /// Repository directory to act in. Defaults to the server's working directory.
     #[serde(default)]
     pub cwd: Option<String>,
@@ -448,6 +480,93 @@ impl GitOpsServer {
                     for c in outcome.governance.corrections.iter().filter(|c| c.applied) {
                         text.push_str(&format!("- `{}` — {}\n", c.command, c.reason));
                     }
+                }
+                Ok(with_structured(text, &outcome))
+            }
+            Err(err) => Ok(failed(err)),
+        }
+    }
+
+    #[tool(
+        name = "tag",
+        description = "Create a signed, annotated tag (`git tag -s`) on a commit (default `HEAD`), after reconciling signing config, then verify its signature. Refuses a name that already exists — tags are never moved or replaced — an invalid name, or an unknown commit. Publish it with `push_tag`."
+    )]
+    fn tag(&self, Parameters(params): Parameters<TagParams>) -> Result<CallToolResult, ErrorData> {
+        let request = TagRequest {
+            name: params.name,
+            message: params.message,
+            target: params.target,
+            cwd: params.cwd.map(PathBuf::from),
+        };
+
+        match gitops_git::tag::tag(&self.runner, &request) {
+            Ok(outcome) => {
+                let mut text = format!(
+                    "Created signed tag `{}` ({}) on {}.\n",
+                    outcome.name,
+                    short(Some(&outcome.tag)),
+                    short(Some(&outcome.commit)),
+                );
+                if outcome.verified {
+                    text.push_str("Signature verified.\n");
+                } else {
+                    text.push_str(&format!(
+                        "The signature did NOT verify, so `push_tag` will refuse it:\n{}\n",
+                        outcome.verification
+                    ));
+                }
+                if outcome.governance.changed() {
+                    text.push_str("Config corrected before signing:\n");
+                    for c in outcome.governance.corrections.iter().filter(|c| c.applied) {
+                        text.push_str(&format!("- `{}` — {}\n", c.command, c.reason));
+                    }
+                }
+                Ok(with_structured(text, &outcome))
+            }
+            Err(err) => Ok(failed(err)),
+        }
+    }
+
+    #[tool(
+        name = "push_tag",
+        description = "Publish one tag to a remote (default `origin`) by its full ref. Only a signed, annotated tag whose signature verifies is pushed, and only when every commit it would carry to the remote is signed. A tag the remote already has is never overwritten: the same tag is reported up to date, a different one is refused."
+    )]
+    fn push_tag(
+        &self,
+        Parameters(params): Parameters<PushTagParams>,
+    ) -> Result<CallToolResult, ErrorData> {
+        let request = PushTagRequest {
+            name: params.name,
+            remote: params.remote,
+            cwd: params.cwd.map(PathBuf::from),
+        };
+
+        match gitops_git::tag::push_tag(&self.runner, &request) {
+            Ok(outcome) => {
+                let mut text = if outcome.up_to_date {
+                    format!(
+                        "`{}` already has tag `{}`; nothing to push.\n",
+                        outcome.remote, outcome.name
+                    )
+                } else {
+                    format!(
+                        "Pushed signed tag `{}` to `{}` ({} new commit(s), all signed).\n",
+                        outcome.name,
+                        outcome.remote,
+                        outcome.published.len()
+                    )
+                };
+                for commit in &outcome.published {
+                    text.push_str(&format!(
+                        "  {} {} {}\n",
+                        short(Some(&commit.commit)),
+                        commit.verdict,
+                        commit.subject
+                    ));
+                }
+                if !outcome.output.is_empty() {
+                    text.push_str(&outcome.output);
+                    text.push('\n');
                 }
                 Ok(with_structured(text, &outcome))
             }

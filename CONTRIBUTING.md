@@ -19,7 +19,7 @@ Ports and adapters, with exactly one port:
   MCP ──▶│ gitops-git (domain)              │──▶ CommandRunner ──▶ git / gpg / ssh-keygen
  stdio   │  status · governance · commit     │      (port)           (SystemRunner adapter)
          │  restore · merge · cherry-pick    │
-         │  push · diff                      │                       (ScriptedRunner in tests)
+         │  push · tag · diff                │                       (ScriptedRunner in tests)
          └──────────────────────────────────┘
 ```
 
@@ -42,6 +42,10 @@ Ports and adapters, with exactly one port:
   Refuses while another operation is in progress, so any cherry-pick state left after a
   failure is its own, and aborts that state rather than leaving a half-applied pick.
 * `push.rs` — publish the current branch, gated on every commit being signed.
+* `tag.rs` — reconcile, then `git tag -s` under a name that does not exist yet, and
+  verify the result. `push_tag` publishes one tag by its full ref, only if it is
+  annotated, verifies, and carries no unsigned commit; a tag the remote already has is
+  never replaced.
 * `diff.rs` — summarise a diff, and render the hunks only on request under a line cap. The
   one read-only operation here: it exists because the unbounded `git diff` an agent would
   otherwise run is its own kind of damage.
@@ -69,8 +73,9 @@ These are the reason the crate exists. Do not relax them without a very good arg
    (missing `core.hooksPath`, no executable bit) is reported as drift and deliberately
    *not* auto-corrected — both have legitimate causes, so the fix is a judgment call.
 6. **A safeguard is never a parameter.** The dangerous variants of `restore`, `merge`,
-   `cherry_pick` and `push` are absent from the request types, not defaulted to off: no force, no
-   `--no-verify`, no "restore everything", no conflict strategy or skip, no confirmation flag to flip. A caller that
+   `cherry_pick`, `push`, `tag` and `push_tag` are absent from the request types, not defaulted to off: no force, no
+   `--no-verify`, no "restore everything", no conflict strategy or skip, no tag replacement or
+   lightweight tag, no confirmation flag to flip. A caller that
    cannot name a knob cannot be talked into using it, and a refusal message that names the
    flag it is refusing teaches that the flag exists — so refusals state the rule instead.
    `nothing_this_server_runs_can_overwrite_published_history` asserts the command lines.
@@ -80,7 +85,8 @@ These are the reason the crate exists. Do not relax them without a very good arg
    reflog; the patch is the only recovery path, so it is not optional.
 8. **Published history is not the server's to rewrite.** `push` only fast-forwards, and it
    refuses to publish any commit whose `%G?` verdict is not `G` or `U`. This is the one
-   place signing is enforced on commits the server did not create.
+   place signing is enforced on commits the server did not create. `push_tag` applies the
+   same rule to the history a tag carries, and never moves a tag the remote already has.
 9. **stdout is the protocol.** All logging goes to stderr (`--log`, or `GITOPS_MCP_LOG`,
    sets the filter). Printing to stdout corrupts the MCP stream. Argument parsing lives in
    `main.rs` and must answer and exit — a flag that fell through to the server would leave

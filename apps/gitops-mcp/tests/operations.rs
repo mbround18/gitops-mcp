@@ -1,4 +1,4 @@
-//! End-to-end: the restore, merge, cherry-pick and push tools driven over real stdio JSON-RPC against
+//! End-to-end: the restore, merge, cherry-pick, push and tag tools driven over real stdio JSON-RPC against
 //! a real repository, a real signing key and a real (local, bare) remote.
 //!
 //! These prove the safeguards hold against git itself rather than against a script.
@@ -465,6 +465,145 @@ fn an_unknown_remote_is_refused() {
         result.text().contains("not a configured remote"),
         "{}",
         result.text()
+    );
+}
+
+// ---------------------------------------------------------------- tags
+
+fn cwd(sandbox: &Sandbox) -> String {
+    sandbox.repo.to_str().unwrap().to_owned()
+}
+
+#[test]
+fn a_signed_tag_is_made_verified_and_published_once() {
+    let sandbox = Sandbox::new();
+    let remote = sandbox.bare_remote("origin");
+    let mut server = sandbox.server();
+    commit_all(&mut server, &sandbox.repo, "chore: seed");
+
+    let made = server.call(
+        "tag",
+        json!({"name": "v0.1.0", "message": "first release", "cwd": cwd(&sandbox)}),
+    );
+    assert!(!made.is_error(), "{}", made.text());
+    assert!(
+        made.text().contains("Signature verified"),
+        "{}",
+        made.text()
+    );
+    assert_eq!(sandbox.git(&["cat-file", "-t", "v0.1.0"]), "tag");
+    sandbox.git(&["verify-tag", "v0.1.0"]);
+
+    let pushed = server.call("push_tag", json!({"name": "v0.1.0", "cwd": cwd(&sandbox)}));
+    assert!(!pushed.is_error(), "{}", pushed.text());
+    assert_eq!(
+        sandbox.remote_git(&remote, &["rev-parse", "refs/tags/v0.1.0"]),
+        sandbox.git(&["rev-parse", "refs/tags/v0.1.0"]),
+        "the remote has the tag object itself"
+    );
+
+    let again = server.call("push_tag", json!({"name": "v0.1.0", "cwd": cwd(&sandbox)}));
+    assert!(!again.is_error(), "{}", again.text());
+    assert!(again.text().contains("nothing to push"), "{}", again.text());
+}
+
+#[test]
+fn an_existing_tag_is_never_moved() {
+    let sandbox = Sandbox::new();
+    let mut server = sandbox.server();
+    commit_all(&mut server, &sandbox.repo, "chore: seed");
+    let first = server.call(
+        "tag",
+        json!({"name": "v1", "message": "one", "cwd": cwd(&sandbox)}),
+    );
+    assert!(!first.is_error(), "{}", first.text());
+    let before = sandbox.git(&["rev-parse", "refs/tags/v1"]);
+
+    sandbox.write("more.txt", "more\n");
+    commit_all(&mut server, &sandbox.repo, "feat: more");
+    let second = server.call(
+        "tag",
+        json!({"name": "v1", "message": "one again", "cwd": cwd(&sandbox)}),
+    );
+    assert!(second.is_error(), "{}", second.text());
+    assert!(
+        second.text().contains("already exists"),
+        "{}",
+        second.text()
+    );
+    assert_eq!(sandbox.git(&["rev-parse", "refs/tags/v1"]), before);
+}
+
+#[test]
+fn a_lightweight_tag_is_never_published() {
+    let sandbox = Sandbox::new();
+    let remote = sandbox.bare_remote("origin");
+    let mut server = sandbox.server();
+    commit_all(&mut server, &sandbox.repo, "chore: seed");
+    sandbox.git(&["tag", "light"]);
+
+    let result = server.call("push_tag", json!({"name": "light", "cwd": cwd(&sandbox)}));
+    assert!(result.is_error(), "{}", result.text());
+    assert!(result.text().contains("lightweight"), "{}", result.text());
+    assert_eq!(
+        sandbox.remote_git(&remote, &["rev-list", "--all", "--count"]),
+        "0"
+    );
+}
+
+#[test]
+fn a_tag_on_an_unsigned_commit_is_not_published() {
+    let sandbox = Sandbox::new();
+    let remote = sandbox.bare_remote("origin");
+    let mut server = sandbox.server();
+    commit_all(&mut server, &sandbox.repo, "chore: seed");
+    sandbox.write("sneaky.txt", "unsigned\n");
+    sandbox.git(&["add", "sneaky.txt"]);
+    sandbox.git(&["commit", "-q", "--no-gpg-sign", "-m", "chore: unsigned"]);
+
+    let made = server.call(
+        "tag",
+        json!({"name": "v2", "message": "two", "cwd": cwd(&sandbox)}),
+    );
+    assert!(!made.is_error(), "{}", made.text());
+    let result = server.call("push_tag", json!({"name": "v2", "cwd": cwd(&sandbox)}));
+    assert!(result.is_error(), "{}", result.text());
+    assert!(result.text().contains("not signed"), "{}", result.text());
+    assert_eq!(
+        sandbox.remote_git(&remote, &["rev-list", "--all", "--count"]),
+        "0"
+    );
+}
+
+#[test]
+fn a_different_tag_on_the_remote_is_left_alone() {
+    let sandbox = Sandbox::new();
+    let remote = sandbox.bare_remote("origin");
+    let mut server = sandbox.server();
+    commit_all(&mut server, &sandbox.repo, "chore: seed");
+    server.call("push", json!({"cwd": cwd(&sandbox)}));
+
+    // Someone else publishes `v3` first, on their own commit.
+    let other = sandbox.home_path().join("other");
+    sandbox.clone_to(&other, &remote);
+    std::fs::write(other.join("theirs.txt"), "theirs\n").unwrap();
+    sandbox.run_in(&other, &["add", "theirs.txt"]);
+    sandbox.run_in(&other, &["commit", "-q", "-m", "feat: theirs"]);
+    sandbox.run_in(&other, &["tag", "-s", "-m", "theirs", "v3"]);
+    sandbox.run_in(&other, &["push", "-q", "origin", "refs/tags/v3"]);
+    let theirs = sandbox.remote_git(&remote, &["rev-parse", "refs/tags/v3"]);
+
+    let made = server.call(
+        "tag",
+        json!({"name": "v3", "message": "ours", "cwd": cwd(&sandbox)}),
+    );
+    assert!(!made.is_error(), "{}", made.text());
+    let result = server.call("push_tag", json!({"name": "v3", "cwd": cwd(&sandbox)}));
+    assert!(result.is_error(), "{}", result.text());
+    assert!(result.text().contains("different tag"), "{}", result.text());
+    assert_eq!(
+        sandbox.remote_git(&remote, &["rev-parse", "refs/tags/v3"]),
+        theirs
     );
 }
 
