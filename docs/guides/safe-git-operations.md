@@ -8,9 +8,10 @@ Three git operations have a safe form and a destructive one, separated by a sing
 | Landing a branch | fast-forward, or refuse | merge, rebase or reset until it lands |
 | Taking someone's commits | replay them signed, or abort cleanly | resolve the conflict by picking a side |
 | Publishing | fast-forward the remote | overwrite what is already there |
+| Tagging a release | a new signed tag, published once | move or replace a tag others already fetched |
 
 An agent that is stuck reaches for the second column, because it ends the error. The
-`restore`, `merge_ff_only`, `cherry_pick` and `push` tools exist so the first column is the only one
+`restore`, `merge_ff_only`, `cherry_pick`, `push`, `tag` and `push_tag` tools exist so the first column is the only one
 available. `diff`, at the end, is the read-only one: it changes nothing, and is here
 because an unbounded `git diff` is its own kind of damage.
 
@@ -184,6 +185,44 @@ author's call, and the tool reports it rather than deciding.
 
 The refspec is written out in full on both sides, so a `push.default` or `remote.*.push`
 setting cannot redirect the push somewhere you did not name.
+
+## `tag` and `push_tag` — name a release
+
+```jsonc
+{ "name": "v1.2.0", "message": "1.2.0", "target": "main" }  // tag; target defaults to HEAD
+{ "name": "v1.2.0", "remote": "origin" }                     // push_tag; remote is optional
+```
+
+`tag` reconciles signing config the way `commit` does, then runs `git tag -s`: the tag is
+always annotated and always signed, and its signature is checked with `git verify-tag`
+straight away. A tag that does not verify (an SSH key missing from the allowed-signers file,
+say) is still created, and the result says so — `push_tag` will refuse it.
+
+**A tag is never moved.** Someone who fetched `v1.2.0` builds from what it pointed at; a
+tag that changes underneath them changes their build without telling them. So a name that
+already exists is refused, locally and on the remote:
+
+```
+tag `v1.2.0` already exists and points at `4f1c…`.
+
+A tag is never moved or replaced: anyone who fetched it would silently build something
+else. Choose a new name, or report it and let the author decide what this one should be.
+```
+
+`push_tag` publishes exactly one tag, by its full ref (`refs/tags/v1.2.0:refs/tags/v1.2.0`,
+no `+`), and checks first:
+
+| Situation | What happens |
+| --- | --- |
+| the tag is lightweight | refused — there is no signature to check |
+| the tag's signature does not verify | refused, with git's own reason |
+| the tag's commit, or history behind it, is unsigned and not yet on the remote | refused, naming the commits — the same rule as `push` |
+| the remote already has this exact tag | reported as up to date |
+| the remote has a different tag of the same name | refused; the remote's tag is left alone |
+| a `pre-push` hook exits non-zero | the hook's output comes back as the error |
+
+There is no "push every tag" form: a stray local tag should not be published because a
+release tag was.
 
 ## `diff` — see what changed
 

@@ -14,6 +14,8 @@ This repo registers itself as a project-scope MCP server (`.mcp.json`), so after
 * `mcp__gitops__merge_ff_only` — `{ref}` instead of `git merge`.
 * `mcp__gitops__cherry_pick` — `{commits: [...]}` instead of `git cherry-pick`.
 * `mcp__gitops__push` — `{}` instead of `git push`.
+* `mcp__gitops__tag` — `{name, message}` instead of `git tag -s`.
+* `mcp__gitops__push_tag` — `{name}` instead of `git push origin refs/tags/<name>`.
 * `mcp__gitops__diff` — `{}`, or `{patch: true}` for the hunks, instead of `git diff`.
 * `mcp__gitops__git_signing_status` — before touching anything signing-related.
 * `mcp__gitops__git_signing_enforce` — the only way config gets repaired.

@@ -182,7 +182,7 @@ pub fn push(runner: &dyn CommandRunner, request: &PushRequest) -> Result<PushOut
     })
 }
 
-fn check_remote(remote: &str) -> Result<()> {
+pub(crate) fn check_remote(remote: &str) -> Result<()> {
     let reject = |why: &str| {
         Err(Error::InvalidRequest(format!(
             "`{remote}` is not a usable remote name: {why}"

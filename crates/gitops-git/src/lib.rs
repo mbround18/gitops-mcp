@@ -14,7 +14,9 @@
 //! fast-forwards, [`push::push`] only publishes signed commits on the current branch —
 //! and none of them exposes a parameter that relaxes the rule. [`cherry_pick::cherry_pick`]
 //! joins them: it signs every commit it creates, and a pick that cannot apply cleanly is
-//! aborted rather than resolved.
+//! aborted rather than resolved. [`tag::tag`] and [`tag::push_tag`] do the same for
+//! release tags: only signed annotated tags are made, none is ever replaced, and only one
+//! that verifies is published.
 //!
 //! [`diff::diff`] is here for the opposite reason: it changes nothing, and exists so that
 //! "what did I change" costs a summary rather than a patch nobody budgeted for.
@@ -29,6 +31,7 @@ pub mod push;
 pub mod restore;
 pub mod runner;
 pub mod status;
+pub mod tag;
 pub mod workspace;
 
 pub use cherry_pick::{CherryPickOutcome, CherryPickRequest, cherry_pick};
@@ -40,6 +43,7 @@ pub use push::{CommitSignature, PushOutcome, PushRequest, push};
 pub use restore::{RestoreOutcome, RestoreRequest, restore};
 pub use runner::{CommandRunner, SystemRunner};
 pub use status::{Drift, HooksStatus, ScopedValue, SigningIdentity, SigningStatus};
+pub use tag::{PushTagOutcome, PushTagRequest, TagOutcome, TagRequest, push_tag, tag};
 pub use workspace::{
     CleanupMode, WorkspaceApplyOutcome, WorkspaceApplyRequest, WorkspaceCleanupAction,
     WorkspaceCleanupOutcome, WorkspaceCleanupRequest, WorkspaceDiffExportOutcome,
@@ -184,6 +188,31 @@ pub enum Error {
     },
     #[error("push failed: {detail}")]
     PushFailed { detail: String },
+    #[error(
+        "tag `{name}` already exists and points at `{existing}`.\n\n\
+         A tag is never moved or replaced: anyone who fetched it would silently build \
+         something else. Choose a new name, or report it and let the author decide what \
+         this one should be."
+    )]
+    TagExists { name: String, existing: String },
+    #[error(
+        "refusing to push tag `{name}`: {detail}\n\n\
+         Only a signed, annotated tag that verifies is published. Create one with the \
+         `tag` tool under a new name — do not publish this one another way."
+    )]
+    UnsignedTag { name: String, detail: String },
+    #[error(
+        "`{remote}` already has a different tag `{name}` ({detail}).\n\n\
+         A published tag is never overwritten or deleted by this server: others may \
+         already have fetched it. Report it and let the author decide."
+    )]
+    TagOnRemote {
+        name: String,
+        remote: String,
+        detail: String,
+    },
+    #[error("tag failed: {detail}")]
+    TagFailed { detail: String },
     #[error("diff failed: {detail}")]
     DiffFailed { detail: String },
     #[error("workspace operation failed: {detail}")]
