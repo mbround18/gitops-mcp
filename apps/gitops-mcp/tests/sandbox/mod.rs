@@ -160,23 +160,32 @@ impl Sandbox {
 
     /// Start the MCP server against this sandbox and complete the handshake.
     pub fn server(&self) -> Server {
-        let mut child = command(
+        self.server_with(&[], false)
+    }
+
+    /// Start the server with extra environment and, when `terminal` is set, inside a
+    /// session whose controlling terminal is a fresh pseudo-terminal nobody reads -- the
+    /// way an MCP client that runs in a terminal launches it.
+    pub fn server_with(&self, env: &[(&str, &str)], terminal: bool) -> Server {
+        let mut cmd = command(
             &self.repo,
             self.home(),
             env!("CARGO_BIN_EXE_gitops-mcp"),
             &[],
-        )
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn gitops-mcp");
+        );
+        cmd.envs(env.iter().copied())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        let terminal = terminal.then(|| pty::attach(&mut cmd));
+        let mut child = cmd.spawn().expect("spawn gitops-mcp");
 
         let stdout = BufReader::new(child.stdout.take().unwrap());
         let mut server = Server {
             child,
             stdout,
             next_id: 1,
+            _terminal: terminal,
         };
         server.request(
             "initialize",
@@ -195,6 +204,8 @@ pub struct Server {
     child: Child,
     stdout: BufReader<std::process::ChildStdout>,
     next_id: u64,
+    /// Master side of the server's controlling terminal, held open for its lifetime.
+    _terminal: Option<std::os::fd::OwnedFd>,
 }
 
 impl Server {
@@ -219,6 +230,29 @@ impl Server {
         let stdin = self.child.stdin.as_mut().unwrap();
         writeln!(stdin, "{value}").unwrap();
         stdin.flush().unwrap();
+    }
+
+    /// Call a tool, failing the test instead of hanging it if no answer comes within
+    /// `limit`.
+    pub fn call_within(
+        mut self,
+        tool: &'static str,
+        arguments: serde_json::Value,
+        limit: std::time::Duration,
+    ) -> (Self, ToolResult) {
+        let pid = self.child.id();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let result = self.call(tool, arguments);
+            let _ = tx.send((self, result));
+        });
+        rx.recv_timeout(limit).unwrap_or_else(|_| {
+            // Free whatever the server left running before failing.
+            let _ = Command::new("pkill")
+                .args(["-KILL", "-s", &pid.to_string()])
+                .status();
+            panic!("`{tool}` did not answer within {}s", limit.as_secs())
+        })
     }
 
     /// Call a tool and return its result.
@@ -290,4 +324,46 @@ fn run(cwd: &Path, home: &Path, program: &str, args: &[&str]) {
         "{program} {args:?} failed: {}",
         String::from_utf8_lossy(&out.stderr)
     );
+}
+
+mod pty {
+    use std::{
+        ffi::{CStr, CString},
+        os::{
+            fd::{FromRawFd, OwnedFd},
+            unix::process::CommandExt,
+        },
+        process::Command,
+    };
+
+    /// Give the process `cmd` spawns a new session whose controlling terminal is a new
+    /// pseudo-terminal, and return the master side.
+    pub fn attach(cmd: &mut Command) -> OwnedFd {
+        // SAFETY: plain libc pty calls on a descriptor this function owns.
+        let (master, slave) = unsafe {
+            let fd = libc::posix_openpt(libc::O_RDWR | libc::O_NOCTTY | libc::O_CLOEXEC);
+            assert!(fd >= 0, "posix_openpt");
+            assert_eq!(libc::grantpt(fd), 0, "grantpt");
+            assert_eq!(libc::unlockpt(fd), 0, "unlockpt");
+            let mut name = [0 as libc::c_char; 128];
+            assert_eq!(libc::ptsname_r(fd, name.as_mut_ptr(), name.len()), 0);
+            let slave = CString::from(CStr::from_ptr(name.as_ptr()));
+            (OwnedFd::from_raw_fd(fd), slave)
+        };
+        // SAFETY: only async-signal-safe calls between fork and exec.
+        unsafe {
+            cmd.pre_exec(move || {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                let fd = libc::open(slave.as_ptr(), libc::O_RDWR);
+                if fd == -1 || libc::ioctl(fd, libc::TIOCSCTTY, 0) == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                libc::close(fd);
+                Ok(())
+            });
+        }
+        master
+    }
 }

@@ -19,7 +19,7 @@ use crate::{
     commit::looks_like_signing_failure,
     governance::{Reconciliation, reconcile},
     merge::{check_ref, combined},
-    push::{CommitSignature, check_remote, parse_log},
+    push::{CommitSignature, check_remote, failure_detail, parse_log},
     runner::CommandRunner,
     status::SigningStatus,
     trimmed,
@@ -208,10 +208,10 @@ pub fn push_tag(runner: &dyn CommandRunner, request: &PushTagRequest) -> Result<
         })?;
 
     // What the remote already has under this name decides whether there is anything to do.
-    let listed = runner.run("git", &["ls-remote", remote, &full], cwd)?;
+    let listed = runner.run_network("git", &["ls-remote", remote, &full], cwd)?;
     if !listed.ok() {
         return Err(Error::PushFailed {
-            detail: combined(&listed.stdout, &listed.stderr),
+            detail: failure_detail(&listed),
         });
     }
     let theirs = listed
@@ -268,9 +268,9 @@ pub fn push_tag(runner: &dyn CommandRunner, request: &PushTagRequest) -> Result<
     let refspec = format!("{full}:{full}");
     let args = ["push", remote, refspec.as_str()];
     let command = format!("git {}", args.join(" "));
-    let out = runner.run("git", &args, cwd)?;
+    let out = runner.run_network("git", &args, cwd)?;
     if !out.ok() {
-        let detail = combined(&out.stdout, &out.stderr);
+        let detail = failure_detail(&out);
         let lower = detail.to_ascii_lowercase();
         if lower.contains("already exists") || lower.contains("[rejected]") {
             return Err(Error::TagOnRemote {

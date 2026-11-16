@@ -190,3 +190,9 @@ The registered server runs the installed binary, not `target/debug`.
 
 **Server logs.** `GITOPS_MCP_LOG=debug` (or `--log debug`) prints every command the server runs to stderr,
 which Claude Code surfaces in the MCP server output.
+
+**A push or `push_tag` that times out.** Commands that talk to a remote run without a
+terminal and are killed after 120 seconds, with whatever the transport printed in the
+error. A transport that needs to ask something (an ssh passphrase, an unknown host key, a
+login) fails instead of waiting; run the same `git push` in a terminal to answer it once.
+For a slow link, raise the limit with `GITOPS_MCP_NETWORK_TIMEOUT_SECS`.

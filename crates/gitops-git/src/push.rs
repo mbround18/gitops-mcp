@@ -18,7 +18,11 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Error, Result, merge::combined, runner::CommandRunner, status::SigningStatus, trimmed,
+    Error, Result,
+    merge::combined,
+    runner::{CommandOutput, CommandRunner},
+    status::SigningStatus,
+    trimmed,
 };
 
 /// Where to publish the current branch.
@@ -152,9 +156,9 @@ pub fn push(runner: &dyn CommandRunner, request: &PushRequest) -> Result<PushOut
     args.extend_from_slice(&[remote, refspec.as_str()]);
     let command = format!("git {}", args.join(" "));
 
-    let out = runner.run("git", &args, cwd)?;
+    let out = runner.run_network("git", &args, cwd)?;
     if !out.ok() {
-        let detail = combined(&out.stdout, &out.stderr);
+        let detail = failure_detail(&out);
         if rejected_non_fast_forward(&detail) {
             return Err(Error::PushRejected {
                 remote: remote.to_owned(),
@@ -180,6 +184,17 @@ pub fn push(runner: &dyn CommandRunner, request: &PushRequest) -> Result<PushOut
         command,
         output: combined(&out.stdout, &out.stderr),
     })
+}
+
+/// What a failed command said, or, when it said nothing, how it ended. An empty
+/// "push failed:" leaves nobody anything to act on.
+pub(crate) fn failure_detail(out: &CommandOutput) -> String {
+    let detail = combined(&out.stdout, &out.stderr);
+    if detail.is_empty() {
+        format!("git exited with status {} and printed nothing", out.status)
+    } else {
+        detail
+    }
 }
 
 pub(crate) fn check_remote(remote: &str) -> Result<()> {
@@ -390,6 +405,22 @@ mod tests {
             1,
             "{:?}",
             runner.calls()
+        );
+    }
+
+    #[test]
+    fn a_push_that_dies_silently_still_says_how_it_ended() {
+        let runner = runner().with(
+            "git push origin refs/heads/main:refs/heads/main",
+            -1,
+            "",
+            "",
+        );
+        let err = push(&runner, &request()).unwrap_err();
+        assert!(matches!(err, Error::PushFailed { .. }), "{err}");
+        assert_eq!(
+            err.to_string(),
+            "push failed: git exited with status -1 and printed nothing"
         );
     }
 

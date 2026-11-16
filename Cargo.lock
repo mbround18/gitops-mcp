@@ -395,6 +395,7 @@ dependencies = [
 name = "gitops-git"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "thiserror",
  "tracing",
@@ -408,6 +409,7 @@ dependencies = [
  "anyhow",
  "clap",
  "gitops-git",
+ "libc",
  "rmcp",
  "schemars",
  "serde",
